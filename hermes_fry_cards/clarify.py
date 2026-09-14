@@ -21,6 +21,7 @@ The patch is idempotent and never raises into the adapter import path.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from types import SimpleNamespace
@@ -294,6 +295,68 @@ def _callback_card(
     return response
 
 
+# ---------------------------------------------------------------------------
+# Patch-API fallback (2026-09-14): SDK 回调响应通道 (P2CardActionTriggerResponse.card)
+# 在 2026-09-12 核心升级后在本部署不再渲染——点击服务端全部正常解析，
+# 但原地刷新永远不渲染，多选卡的 toggle→submit 链条因此饿死。
+# im/v1 message patch 是独立通道：两条通道携带同一份卡片 JSON，后到者为视觉幂等。
+# Best-effort，绝不抛错。
+# ---------------------------------------------------------------------------
+
+try:
+    from lark_oapi.api.im.v1 import (
+        PatchMessageRequest as _PatchMessageRequest,
+        PatchMessageRequestBody as _PatchMessageRequestBody,
+    )
+except Exception:  # pragma: no cover - 老版 SDK 降级
+    _PatchMessageRequest = None
+    _PatchMessageRequestBody = None
+
+
+async def _patch_clarify_card(self: Any, message_id: str, card_data: Dict[str, Any]) -> None:
+    """通过 im/v1 patch 把 card_data 强制渲染到 message_id（独立于回调回执）。"""
+    if _PatchMessageRequest is None or not message_id:
+        return
+    client = getattr(self, "_client", None)
+    if client is None:
+        return
+    try:
+        await asyncio.sleep(0.6)  # 让同步回调响应先落地
+        request = (
+            _PatchMessageRequest.builder()
+            .message_id(message_id)
+            .request_body(
+                _PatchMessageRequestBody.builder()
+                .content(json.dumps(card_data, ensure_ascii=False))
+                .build()
+            )
+            .build()
+        )
+        resp = await client.im.v1.message.apatch(request)
+        if getattr(resp, "success", lambda: False)():
+            _logger.info("[fry-cards] clarify card patch applied msg=%s", message_id[:16])
+        else:
+            _logger.debug(
+                "[fry-cards] clarify card patch failed code=%s msg=%s",
+                getattr(resp, "code", "?"), getattr(resp, "msg", "?"),
+            )
+    except Exception:
+        _logger.debug("[fry-cards] clarify card patch error", exc_info=True)
+
+
+def _fire_card_patch(self: Any, loop: Any, message_id: str, card_data: Dict[str, Any]) -> None:
+    """在 adapter loop 上调度 patch 兜底（best-effort）。"""
+    if not message_id:
+        return
+    submit = getattr(self, "_submit_on_loop", None)
+    if submit is None:
+        return
+    try:
+        submit(loop, _patch_clarify_card(self, message_id, card_data))
+    except Exception:
+        _logger.debug("[fry-cards] clarify card patch schedule failed", exc_info=True)
+
+
 def handle_clarify_card_action(
     self: Any, *, event: Any, action_value: Dict[str, Any], loop: Any
 ) -> Any:
@@ -343,6 +406,7 @@ def handle_clarify_card_action(
             selected=_CLARIFY_SELECTIONS.get(clarify_id),
             show_input=True,
         )
+        _fire_card_patch(self, loop, str(state.get("message_id") or ""), card)
         return _callback_card(
             self, card,
             toast_type="info",
@@ -359,14 +423,15 @@ def handle_clarify_card_action(
         except Exception:
             _logger.debug("[fry-cards] text_submit form_value parse failed", exc_info=True)
         if not text:
+            _warn_card = build_clarify_card(
+                question=question, choices=choices, clarify_id=clarify_id,
+                multi_select=bool(state.get("multi_select")),
+                selected=_CLARIFY_SELECTIONS.get(clarify_id),
+                show_input=True,
+            )
+            _fire_card_patch(self, loop, str(state.get("message_id") or ""), _warn_card)
             return _callback_card(
-                self,
-                build_clarify_card(
-                    question=question, choices=choices, clarify_id=clarify_id,
-                    multi_select=bool(state.get("multi_select")),
-                    selected=_CLARIFY_SELECTIONS.get(clarify_id),
-                    show_input=True,
-                ),
+                self, _warn_card,
                 toast_type="warning",
                 toast_content="请先在输入框里写点什么再提交",
             )
@@ -387,9 +452,12 @@ def handle_clarify_card_action(
             "clarify custom text resolved (id=%s, text=%r, user=%s)",
             clarify_id, text[:60], user_name,
         )
+        _submitted_card = build_resolved_clarify_card(
+            question=question, response_text=text, user_name=user_name,
+        )
+        _fire_card_patch(self, loop, str(state.get("message_id") or ""), _submitted_card)
         return _callback_card(
-            self,
-            build_resolved_clarify_card(question=question, response_text=text, user_name=user_name),
+            self, _submitted_card,
             toast_type="success",
             toast_content="已提交你的自定义回答",
         )
@@ -408,10 +476,12 @@ def handle_clarify_card_action(
             sel.append(idx)
             if len(sel) > 4:
                 sel.pop(0)  # choices are capped at 4 by the tool schema
-        return _callback_card(self, build_clarify_card(
+        _toggled_card = build_clarify_card(
             question=question, choices=choices, clarify_id=clarify_id,
             multi_select=True, selected=sel,
-        ))
+        )
+        _fire_card_patch(self, loop, str(state.get("message_id") or ""), _toggled_card)
+        return _callback_card(self, _toggled_card)
 
     # Single-select "choose" or multi-select "submit" → resolve the wait.
     resolved_text: Optional[str] = None
@@ -452,9 +522,11 @@ def handle_clarify_card_action(
         "clarify button resolved (id=%s, choice=%r, user=%s)",
         clarify_id, resolved_text[:60], user_name,
     )
-    return _callback_card(self, build_resolved_clarify_card(
+    _final_card = build_resolved_clarify_card(
         question=question, response_text=resolved_text, user_name=user_name,
-    ))
+    )
+    _fire_card_patch(self, loop, str(state.get("message_id") or ""), _final_card)
+    return _callback_card(self, _final_card)
 
 
 def _on_card_action_trigger_patched(self: Any, data: Any) -> Any:
