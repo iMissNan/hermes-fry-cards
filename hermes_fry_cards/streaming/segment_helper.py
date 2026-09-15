@@ -18,6 +18,10 @@ from .tooluse import ToolDisplayStep
 ELEMENT_THRESHOLD = 180  # 飞书硬上限 200，预留 20（18 给波动 + 2 footer 预留）
 FOOTER_RESERVE = 2  # footer 元素预留（hr + markdown）
 
+# 工具面板 payload 封顶常量与函数以 cardkit.builder 为单一真源（流式与完成态共用），
+# 此处 re-export 供 controller 从 segment_helper 导入。
+from ..cardkit.builder import TOOL_PANEL_MAX_STEPS, cap_tool_steps  # noqa: E402, F401
+
 
 def estimate_answer_elements(text: str) -> int:
     """估算 answer segment 当前文本在服务端占用的元素数。

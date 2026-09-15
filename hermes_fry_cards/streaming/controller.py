@@ -7,7 +7,7 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
-from ..cardkit.builder import build_background_card, build_complete_card, build_cron_card, build_streaming_card_v2, LOADING_ELEMENT_ID, TOOL_PANEL_ELEMENT_ID
+from ..cardkit.builder import build_background_card, build_complete_card, build_cron_card, build_streaming_card_v2, LOADING_ELEMENT_ID, TOOL_PANEL_ELEMENT_ID, split_complete_card, _fit_card_bytes
 from ..cardkit.markdown import (
     _downgrade_tables,
     optimize_markdown_style,
@@ -29,6 +29,7 @@ from .segment_helper import (
     build_add_segment_action,
     build_reasoning_finalized_action,
     build_tool_update_action,
+    cap_tool_steps,
     estimate_answer_elements,
     estimate_segment_elements,
     estimate_tool_elements,
@@ -274,14 +275,20 @@ class StreamingController:
                         session.tool_panel_created = True
                         tool_panel_element_id = TOOL_PANEL_ELEMENT_ID
                         seg.created = True
-                        # 用所有工具步骤更新面板
+                        # payload 封顶：历史步骤过多时只灌最近一段。
+                        # 全量灌入会静默把卡片顶过飞书 200 嵌套元素上限（实测 40 步
+                        # partial_update 当次仍返回成功），此后该卡所有写入一律 300305。
+                        panel_steps = all_steps[
+                            seg.tool_offset:seg.tool_end_offset if seg.tool_end_offset else len(all_steps)
+                        ]
+                        panel_steps, _omitted = cap_tool_steps(panel_steps)
                         actions.append(build_tool_update_action(
                             element_id=TOOL_PANEL_ELEMENT_ID,
-                            steps=all_steps[seg.tool_offset:seg.tool_end_offset if seg.tool_end_offset else len(all_steps)],
+                            steps=panel_steps,
                         ))
                         updated_tool_segs.append(seg)
-                        # 初始化工具面板总估算（首次创建，与 dirty 分支统一用全部步骤）
-                        estimate = estimate_tool_elements(0, len(all_steps), all_steps)
+                        # 初始化工具面板总估算（与实际 payload 同口径）
+                        estimate = estimate_tool_elements(0, len(panel_steps), panel_steps)
                         session.tool_panel_estimate = estimate
                         new_el_estimates[TOOL_PANEL_ELEMENT_ID] = estimate
                         new_el_total += estimate
@@ -346,11 +353,14 @@ class StreamingController:
                     continue
                 # 合并面板模式下，工具面板是同一个元素，元素估算按增量累计，
                 # 避免每次把「全部工具步骤」重复计入 element_count 导致虚高拆卡。
-                estimate = estimate_tool_elements(start, end, all_steps)
+                # payload 封顶：全量 all_steps 灌入会静默顶爆服务端 200 嵌套元素上限
+                # （实测 40+ 步 partial 当次成功、后续全部 300305），只保留最近一段。
+                panel_steps, _omitted = cap_tool_steps(all_steps[start:end])
+                estimate = estimate_tool_elements(0, len(panel_steps), panel_steps)
                 # 找到共享面板的 element_id（第一个 tool segment 的 el_id）
                 shared_el_id = tool_panel_element_id or seg.el_id
                 actions.append(
-                    build_tool_update_action(element_id=shared_el_id, steps=all_steps[start:end])
+                    build_tool_update_action(element_id=shared_el_id, steps=panel_steps)
                 )
                 updated_tool_segs.append(seg)
                 # 工具面板元素增量 = 当前总估算 - 上次记录的总估算（非当前段差值）
@@ -587,12 +597,16 @@ class StreamingController:
         session.tool_panel_created = False
         session.tool_panel_estimate = 0
         session.split_disabled = False
-        # 未创建 segment 迁移到新卡，标记 dirty 以便下一轮 flush 重新 add。
-        # 已创建 segment 保留在封印后的旧卡上，无需重置。
+        # 迁移策略：seal_start_idx 之后的 segment 一律回滚为未创建、在新卡重建。
+        # 旧实现只把「未创建」段标 dirty（`if not seg.created: seg.created=False`
+        # 是死赋值），已创建段留在旧卡上——但旧卡因超限 seal 失败后不可再写，
+        # 这些段的后续增量（answer 文本持续增长）会 stream 到新卡上不存在的元素，
+        # 异常被 debug 吞掉 → 新卡空白"没加载"。重建 payload 是空占位（文本随后
+        # stream_element 填入），不会把新卡当场顶爆；flush 循环从 split_index 起
+        # 逐段 add，逼近阈值还会继续主动拆卡，链路自洽。
         for seg in segments[seal_start_idx:]:
-            if not seg.created:
-                seg.created = False
-                seg.dirty = True
+            seg.created = False
+            seg.dirty = True
         _logger.info(
             "CardKit force-split on element limit: msg=%s old_card=%s sealed=%d new_card=%s",
             session.message_id[:12],
@@ -676,7 +690,7 @@ class StreamingController:
                 log_prefix="CardKit seal",
             )
         all_steps = session.tool_use.build_display_steps()
-        seal_card = build_complete_card(
+        seal_card = _fit_card_bytes(build_complete_card(
             segments=seal_segments,
             all_tool_steps=all_steps,
             footer_data=session.footer,
@@ -688,7 +702,7 @@ class StreamingController:
             body_text_size=self._cfg.body_text_size,
             show_tool_use=self._cfg.show_tool_use,
             width_mode=self._cfg.width_mode,
-        )
+        ))  # seal 是过渡态：瘦身截断即可，保证 cardkit_update 必过 200860
         try:
             seq = (session.sequence if sequence is None else sequence) + 1
             await self._client.cardkit_close_streaming(old_card_id, sequence=seq)
@@ -968,11 +982,25 @@ class StreamingController:
                         )
                         streaming_closed = True
                     session.sequence += 1
+                    parts = split_complete_card(card)
                     await self._client.cardkit_update(
                         session.card_id,
-                        card,
+                        parts[0],
                         sequence=session.sequence,
                     )
+                    # 正文超单卡体积 → 续页作为独立卡追发（老板 09-15 要求分条，
+                    # 不再「内容过长，已截断」丢正文）。失败只记日志，不影响主卡完成。
+                    anchor = session.message_id
+                    for extra in parts[1:]:
+                        try:
+                            await self._client.send_card_to_chat(
+                                session.chat_id, extra, reply_to_message_id=anchor,
+                            )
+                        except Exception:
+                            _logger.warning(
+                                "CardKit overflow continuation send failed: msg=%s chat=%s",
+                                session.message_id[:12], session.chat_id[:12], exc_info=True,
+                            )
                 session.state = SessionState.COMPLETED
                 return True
             except FeishuAPIError as e:

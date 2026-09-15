@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.5] - 2026-09-15
+
+### 新增 / Added
+- **完成卡体积超限自动分条（不再截断正文）** — 用户诉求「内容过长被截断看不到，能不能分开发送」。
+  `split_complete_card()`：完成卡超 `CARDKIT_SAFE_BYTES`（140KB，实测 148KB 过 / 150KB 拒）时，
+  顶层元素按**原文顺序**贪心装箱拆成多张卡——主卡走 `cardkit_update` 正常完成，续页以独立卡片
+  追发（回复到同一消息，头顶「⏳ 续第 N 页」标记）；思考面板超容量时子元素跨卡拆分；
+  仅单个元素自身超单卡容量才对它内部截断（保底）。`build_complete_card` 出口不再自动瘦身，
+  体积治理移交调用方：complete 走 split，seal 路径自行 `_fit_card_bytes`（过渡态）。
+  回归契约 `tests/test_issue_split_overflow.py`（含"正文零丢失"断言）。
+
+---
+
+## [0.3.4] - 2026-09-15
+
+### 新增 / Added
+- **一行安装脚本 `install.sh`** + 文档三路径重排（随 #26709c9 合入）。
+
+### 修复 / Fixed
+- **点击后的卡片刷新回执在核心升级后不再渲染** — 新增 `im/v1 patches` 兜底通道（随 #531f11e 合入）。
+- **长会话卡片雪崩双病灶（六刀）** —
+  ① 流式面板每次 flush 全量灌历史步骤，~40 步静默顶爆服务端 200 元素上限后该卡一切写入
+  300305 全拒 → 拆卡连环死。新增 `cap_tool_steps`（`TOOL_PANEL_MAX_STEPS=20` 单一真源），
+  首建/dirty 更新/seal 全路径统一封顶。
+  ② force-split 记账死赋值致新卡空白「没加载」，改为 split 点之后的 segment 全部
+  `created=False, dirty=True` 回滚重建。
+  ③ 完成卡全量 JSON 超 150KB 被 200860 三连拒、卡片永停「处理中」：`build_complete_card`
+  出口加体积闸门 `_fit_card_bytes`（三级瘦身保答案尾）。
+  ④ 注入型回合（后台子代理回执等 message_id=None）整回合无卡：放宽 START 守卫交给
+  controller synthetic 分支兜底建卡。
+  回归契约：`tests/test_issue_element_overflow_cascade.py`、`test_issue_card_size_limit.py`、
+  `test_issue_injected_turn_no_card.py`。
+
+---
+
 ## [0.3.3] - 2026-09-12
 
 ### 新增 / Added

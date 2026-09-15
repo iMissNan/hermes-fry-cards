@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime
 from typing import Any
@@ -22,6 +23,211 @@ TOOL_PANEL_ELEMENT_ID = "tool_panel"
 LOADING_ELEMENT_ID = "loading_icon"
 _LOADING_ELEMENT_ID = LOADING_ELEMENT_ID  # 兼容旧私有引用
 _LOADING_IMG_KEY = "img_v3_02vb_496bec09-4b43-4773-ad6b-0cdd103cd2bg"
+
+# 工具面板单次 payload 的最大步骤数（流式 partial_update 与完成态 seal 共用）。
+# 实测（2026-09-14 对照飞书 CardKit API）：
+#   - 200 元素上限按【嵌套组件总数】计，tool panel 每步 ≈7 个嵌套元素；
+#   - 39 步（≈276 嵌套）建卡/全量更新即 300305；partial_update 灌 40~100 步
+#     当次返回成功但已静默顶过 200，此后该卡所有写入一律 300305；
+#   - 20 步 ≈143 嵌套，给完成卡的推理面板/答案分块/footer 留足余量。
+TOOL_PANEL_MAX_STEPS = 20
+# 200860「card over max size」实测（2026-09-15）：全量卡 JSON 148KB 过 / 150KB 拒。
+# 安全线取 140KB，给结构开销与编码膨胀留余量。
+CARDKIT_SAFE_BYTES = 140 * 1024
+
+
+def cap_tool_steps(
+    steps: list[ToolDisplayStep], max_steps: int = TOOL_PANEL_MAX_STEPS
+) -> tuple[list[ToolDisplayStep], int]:
+    """工具面板 payload 封顶：保留最近 max_steps 步，返回 (capped, omitted_count)。"""
+    if len(steps) <= max_steps:
+        return steps, 0
+    return steps[-max_steps:], len(steps) - max_steps
+
+
+_CARDKIT_TRUNC_MARK = "\n\n…（内容过长，已截断）"
+
+
+def _card_bytes(card: dict[str, Any]) -> int:
+    return len(json.dumps(card, ensure_ascii=False).encode())
+
+
+def _iter_markdown_nodes(card: dict[str, Any]):
+    """递归收集卡片里所有带正文 content 的 markdown 节点（面板子项/答案/footer）。"""
+    def walk(node: Any):
+        if isinstance(node, dict):
+            if node.get("tag") == "markdown" and isinstance(node.get("content"), str):
+                yield node
+            for value in node.values():
+                yield from walk(value)
+        elif isinstance(node, list):
+            for value in node:
+                yield from walk(value)
+    yield from walk(card.get("body", card))
+
+
+def _fit_card_bytes(card: dict[str, Any], *, limit: int = CARDKIT_SAFE_BYTES) -> dict[str, Any]:
+    """把全量卡压进飞书 200860 体积上限（实测 148KB 过 / 150KB 拒）。
+
+    seal/complete 的全量卡包含全部 reasoning 面板 + answer + footer，长任务轻松
+    超 150KB → cardkit_update 三连拒 → 卡片永久停在「处理中」。逐级瘦身：
+    1) 按体积比例截断各 markdown 正文（尾部保留截断标记，保底 256 字符）；
+    2) 仍超限则折半砍最长的一段；
+    3) 结构本身也撑爆时，从前往后丢元素（思考面板在前、最终答案在尾，优先保答案）。
+    任何输入都不抛异常；幂等（已达标直接原样返回副本）。
+    """
+    import copy
+
+    fitted = copy.deepcopy(card)
+    size = _card_bytes(fitted)
+    if size <= limit:
+        return fitted
+    nodes = list(_iter_markdown_nodes(fitted))
+    # 第 1 级：按比例一刀切，给结构与截断标记留 15% 余量
+    scale = (limit * 0.85) / size
+    for node in nodes:
+        content = node["content"]
+        keep = max(256, int(len(content) * scale) - len(_CARDKIT_TRUNC_MARK))
+        if keep < len(content):
+            node["content"] = content[:keep] + _CARDKIT_TRUNC_MARK
+    # 第 2 级：微调，反复折半当前最长的一段
+    while _card_bytes(fitted) > limit:
+        big = max((n for n in nodes if len(n["content"]) > 300),
+                  key=lambda n: len(n["content"]), default=None)
+        if big is None:
+            break
+        big["content"] = big["content"][: len(big["content"]) // 2] + _CARDKIT_TRUNC_MARK
+    # 第 3 级：结构性超限，从前往后丢顶层元素（保尾部答案与 footer）
+    elements = fitted.get("body", {}).get("elements")
+    if isinstance(elements, list):
+        while _card_bytes(fitted) > limit and len(elements) > 1:
+            elements.pop(0)
+    return fitted
+
+
+# 拆卡保险丝：再能装也封顶，防异常输入下卡数失控
+_MAX_OVERFLOW_CARDS = 20
+
+
+def split_complete_card(card: dict[str, Any]) -> list[dict[str, Any]]:
+    """完成卡超 140KB 安全线时按原文素顺序拆成多张卡，正文一字不丢。
+
+    飞书单卡体积上限实测 148KB 过 / 150KB 拒（200860）。旧策略对全部 markdown
+    一刀切截断（含答案正文）→ 用户看到「内容过长，已截断」。新策略贪心装箱：
+    顶层元素按原顺序装进多张卡（主卡带原 header，续卡带「续第 k 页」标记），
+    仅当单元素自身超单卡容量时才对它内部截断（_fit_card_bytes 保底语义）。
+    任何输入都不抛异常；卡不超时返回单元素列表（ deepcopy，原样可发）。
+    """
+    import copy as _copy
+
+    if _card_bytes(card) <= CARDKIT_SAFE_BYTES:
+        return [_copy.deepcopy(card)]
+    elements = (card.get("body") or {}).get("elements")
+    if not isinstance(elements, list) or not elements:
+        return [_fit_card_bytes(card)]
+
+    # 骨架开销 = 空 body 的整卡字节 + JSON 括号余量
+    skeleton = _copy.deepcopy(card)
+    skeleton["body"]["elements"] = []
+    skeleton.pop("summary", None)
+    if isinstance(skeleton.get("config"), dict):
+        skeleton["config"].pop("summary", None)
+    base = _card_bytes(skeleton) + 256
+    capacity = max(CARDKIT_SAFE_BYTES - base, 8 * 1024)
+
+    bins: list[list[dict[str, Any]]] = []
+    cur: list[dict[str, Any]] = []
+    cur_size = 0
+
+    def _flush() -> None:
+        nonlocal cur, cur_size
+        if cur:
+            bins.append(cur)
+            cur, cur_size = [], 0
+
+    def _place(el: dict[str, Any]) -> None:
+        nonlocal cur, cur_size
+        size = _card_bytes(el)
+        if cur and cur_size + size > capacity:
+            _flush()
+        cur.append(el)
+        cur_size += size
+
+    for el in elements:
+        if _card_bytes(el) > capacity:
+            # 面板超容量：把子元素按原顺序拆进多个同构面板，一个字不丢；
+            # 非面板/拆不动的单元素才走内部截断保底。
+            children = el.get("elements")
+            if el.get("tag") == "collapsible_panel" and isinstance(children, list) and children:
+                sub: list[dict[str, Any]] = []
+                sub_size = 0
+                panel_overhead = _card_bytes(el) - sum(_card_bytes(c) for c in children) + 64
+                for ch in children:
+                    ch_size = _card_bytes(ch)
+                    if ch_size > capacity:  # 子元素自身超容 → 只截这一个
+                        shrunk = _fit_card_bytes(
+                            {"schema": "2.0", "body": {"elements": [_copy.deepcopy(ch)]}},
+                            limit=int(capacity),
+                        )["body"]["elements"]
+                        for piece in shrunk:
+                            if sub and sub_size + _card_bytes(piece) + panel_overhead > capacity:
+                                frag = _copy.deepcopy(el)
+                                frag["elements"] = sub
+                                frag.pop("element_id", None)
+                                _place(frag)
+                                sub, sub_size = [], 0
+                            sub.append(piece)
+                            sub_size += _card_bytes(piece)
+                        continue
+                    if sub and sub_size + ch_size + panel_overhead > capacity:
+                        frag = _copy.deepcopy(el)
+                        frag["elements"] = sub
+                        frag.pop("element_id", None)  # 避免跨卡 Duplicate ID
+                        _place(frag)
+                        sub, sub_size = [], 0
+                    sub.append(_copy.deepcopy(ch))
+                    sub_size += ch_size
+                if sub:
+                    frag = _copy.deepcopy(el)
+                    frag["elements"] = sub
+                    frag.pop("element_id", None)
+                    _place(frag)
+                continue
+            # 单元素超容量：只对这一个元素做内部截断，其余正文不动
+            shrunk = _fit_card_bytes(
+                {"schema": "2.0", "body": {"elements": [_copy.deepcopy(el)]}},
+                limit=int(capacity),
+            )
+            for piece in (shrunk.get("body") or {}).get("elements") or []:
+                _place(piece)
+            continue
+        _place(_copy.deepcopy(el))
+    _flush()
+
+    # 保险丝：封顶 _MAX_OVERFLOW_CARDS，多余内容并进末卡并瘦身（极端巨型场景）
+    if len(bins) > _MAX_OVERFLOW_CARDS:
+        head, tail = bins[: _MAX_OVERFLOW_CARDS - 1], [e for b in bins[_MAX_OVERFLOW_CARDS - 1:] for e in b]
+        fitted_tail = _fit_card_bytes(
+            {"schema": "2.0", "body": {"elements": tail}}, limit=int(capacity)
+        )["body"]["elements"]
+        bins = head + [fitted_tail]
+
+    if len(bins) == 1:
+        return [_fit_card_bytes(card)]
+
+    cards: list[dict[str, Any]] = []
+    for i, bin_els in enumerate(bins):
+        if i == 0:
+            c = _copy.deepcopy(card)
+            c["body"]["elements"] = bin_els
+        else:
+            c = _copy.deepcopy(skeleton)
+            c["body"]["elements"] = [
+                {"tag": "markdown",
+                 "content": f"⏳ 续第 {i + 1} 页（上一条消息因体积超限自动分条，正文未删减）"}
+            ] + bin_els
+        cards.append(c)
+    return cards
 
 
 def _truncate_model(name: str) -> str:
@@ -666,6 +872,9 @@ def build_complete_card(
                     text_element_id=text_el_id,
                 ))
         if tool_steps_total:
+            # payload 封顶（与流式面板同口径）：seal 全量重建灌入全部历史步骤会直接
+            # 300305/200860 被拒 → 旧卡永远停在转圈态（今天 4 次 seal failed 实证）。
+            tool_steps_total, _omitted_steps = cap_tool_steps(tool_steps_total)
             tool_panel = _build_tool_panel(tool_steps_total, tool_elapsed_ms, expanded=panel_expanded, element_id=None)
             if "elements" in tool_panel:
                 unified_children.extend(tool_panel["elements"])
@@ -753,6 +962,8 @@ def build_complete_card(
     if header_enabled:
         header_status = "error" if is_error else "stopped" if is_aborted else "completed"
         card["header"] = _build_header(header_status)
+    # 体积治理移交调用方（2026-09-15 分条改造）：complete 路径用 split_complete_card
+    # 拆多卡保全文；seal 路径自行 _fit_card_bytes 瘦身（封卡是过渡态，截了无妨）。
     return card
 
 

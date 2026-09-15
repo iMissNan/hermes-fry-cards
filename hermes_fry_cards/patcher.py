@@ -607,7 +607,11 @@ def _interrupt_hook(indent: str) -> str:
             "            )",
             "        elif _lark_was_interrupted:",
             "            on_message_aborted(message_id=_lark_event_message_id)",
-            "        elif pending_event is not None and _lark_next_message_id:",
+            # 排空 queued follow-up 时起新回合必须建卡。内部注入事件（后台子代理回执、
+            # watch 通知等）的 message_id 是 None，旧守卫 `and _lark_next_message_id`
+            # 直接跳过 START → 整回合无卡（2026-09-14 20:04 例2 实证）。
+            # 传 None 交给 controller 的 synthetic 分支（uuid 会话 + send_card_to_chat）。
+            "        elif pending_event is not None:",
             "            on_message_started(",
             "                message_id=_lark_next_message_id,",
             "                chat_id=getattr(next_source, 'chat_id', source.chat_id),",
