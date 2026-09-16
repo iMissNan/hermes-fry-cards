@@ -69,10 +69,24 @@ _AUTH_HEADER_RE = re.compile(
 _SECRET_FLAG_RE = re.compile(
     r'((?:^|[\s"\'`])(--?[A-Za-z0-9][A-Za-z0-9-]*)(=|\s+)("(?:[^"]*)"|\'(?:[^\']*)\'|[^\s"\'`]+))'
 )
+# WO-0916-HARDEN-01-R R-5（红队 M-3/M-4）：补两类漏网形态——
+# JSON 冒号对 "api_key": "***"（工具 result 常为 JSON dump，key 命中敏感名→值打码）
+_JSON_COLON_SECRET_RE = re.compile(
+    r'("(?P<key>[A-Za-z_][A-Za-z0-9_\-]*)"\s*:\s*")(?P<val>[^"]*)(?P<q>")'
+)
+# URL query 参数 ?token=xxx / &api_key=xxx（参数名命中敏感名→值打码，& 截断、良性参数不动）
+_URL_QUERY_SECRET_RE = re.compile(
+    r"([?&](?P<p>[A-Za-z_][A-Za-z0-9_\-]*)=)(?P<v>[^&\"'\s<>]+)"
+)
 
 
 def redact_inline_secrets(value: str) -> str:
-    """脱敏 key=secret、Authorization header、--flag secret 模式."""
+    """脱敏 key=secret、Authorization header、--flag secret、JSON 冒号对、URL query 参数模式.
+
+    WO-0916-HARDEN-01-R R-5：基线三形态漏掉工具输出最常见的两种载体——
+    JSON `{"api_key": "***"}` 与 URL query `?access_token=***`（红队 M-3/M-4）。
+    宁可误杀：key/参数名命中 _SENSITIVE_NAME_RE 即打码其值。
+    """
 
     def _redact_assign(m: re.Match) -> str:
         key = str(m.group(2))
@@ -86,30 +100,60 @@ def redact_inline_secrets(value: str) -> str:
             return f"{m.group(1)}{m.group(2)}{m.group(3)}[redacted]"
         return str(m.group(0))
 
+    def _redact_json(m: re.Match) -> str:
+        if _SENSITIVE_NAME_RE.search(m.group("key")):
+            return f'"{m.group("key")}": "[redacted]"'
+        return str(m.group(0))
+
+    def _redact_query(m: re.Match) -> str:
+        if _SENSITIVE_NAME_RE.search(m.group("p")):
+            return f"{m.group(1)}[redacted]"
+        return str(m.group(0))
+
     return _SECRET_FLAG_RE.sub(
         _redact_flag,
-        _AUTH_HEADER_RE.sub(r"\1[redacted]", _INLINE_ASSIGNMENT_RE.sub(_redact_assign, value)),
+        _AUTH_HEADER_RE.sub(
+            r"\1[redacted]",
+            _URL_QUERY_SECRET_RE.sub(
+                _redact_query,
+                _JSON_COLON_SECRET_RE.sub(
+                    _redact_json,
+                    _INLINE_ASSIGNMENT_RE.sub(_redact_assign, value),
+                ),
+            ),
+        ),
     )
 
 
 def _sanitize_detail(text: str, sanitizer: str | None) -> str:
-    """根据 sanitizer 类型清洗 detail 文本."""
+    """根据 sanitizer 类型清洗 detail 文本.
+
+    WO-0916-HARDEN-01 A1 补缺：detail 是工具执行证据，任何 sanitizer 分支的
+    出卡文本统一过一遍 redact_inline_secrets（设计借鉴 aiduPOP (monkey2jack, MIT)
+    state/tooluse.py:49-113 的脱敏语义——对方在 _sanitize_detail 各分支同样收口）。
+    """
     if not text or not sanitizer:
-        return text
+        return redact_inline_secrets(text) if text else text
     cleaned = re.sub(r"<[^>]+>", "", text).strip()
     if not cleaned:
-        return text
+        # 空 detail 不回原文本，仍按 sanitize 语义脱敏后返回
+        return redact_inline_secrets(text) if text else text
     if sanitizer == "command":
+        cleaned = _redact_paths(redact_inline_secrets(cleaned))
+    elif sanitizer == "path":
+        cleaned = _basename_only(re.sub(r"^(?:from|file|path)\s+", "", cleaned, flags=re.IGNORECASE).strip())
         cleaned = redact_inline_secrets(cleaned)
-        return _redact_paths(cleaned)
-    if sanitizer == "path":
-        return _basename_only(re.sub(r"^(?:from|file|path)\s+", "", cleaned, flags=re.IGNORECASE).strip())
-    if sanitizer == "search":
-        return cleaned.strip("'\"")
-    if sanitizer == "url":
+    elif sanitizer == "search":
+        cleaned = cleaned.strip("'\"")
+        cleaned = redact_inline_secrets(cleaned)
+    elif sanitizer == "url":
         if cleaned.lower().startswith("from "):
-            return cleaned.strip("'\"").replace("from ", "", 1)
-        return cleaned.strip("'\"")
+            cleaned = cleaned.strip("'\"").replace("from ", "", 1)
+        else:
+            cleaned = cleaned.strip("'\"")
+        cleaned = redact_inline_secrets(cleaned)
+    else:
+        cleaned = redact_inline_secrets(cleaned)
     return cleaned
 
 
@@ -213,8 +257,10 @@ def _build_display_block(
         normalized = value.replace("\r\n", "\n").strip()
         if not normalized:
             return None
-        if sanitizer == "command":
-            normalized = redact_inline_secrets(normalized)
+        # WO-0916-HARDEN-01 A1 补缺：result/error block 是工具执行证据出卡，
+        # 无论 sanitizer 为何都统一脱敏——覆盖代码块围栏内漏网的密钥
+        # （设计借鉴 aiduPOP (monkey2jack, MIT) _build_display_block 的收口位置）。
+        normalized = redact_inline_secrets(normalized)
         # 远程图片 URL 在 CardKit 中是非法 image key，包进代码围栏避免 200570
         if "![" in normalized and "http" in normalized:
             from .image import strip_remote_images
@@ -234,10 +280,13 @@ def _build_display_block(
         return _fenced_block("text" if fallback_lang == "json" else fallback_lang, normalized)
     if isinstance(value, (dict, list)):
         try:
-            return _fenced_block("json", json.dumps(value, ensure_ascii=False, indent=2))
+            # A1 补缺：dict/list 经 json.dumps 后值内可能嵌密钥，出卡前统一脱敏
+            return _fenced_block(
+                "json", redact_inline_secrets(json.dumps(value, ensure_ascii=False, indent=2))
+            )
         except (TypeError, ValueError):
             pass
-    normalized = str(value).strip()
+    normalized = redact_inline_secrets(str(value).strip())
     return _fenced_block("text", normalized) if normalized else None
 
 

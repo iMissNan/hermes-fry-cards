@@ -7,7 +7,16 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
-from ..cardkit.builder import build_background_card, build_complete_card, build_cron_card, build_streaming_card_v2, LOADING_ELEMENT_ID, TOOL_PANEL_ELEMENT_ID, split_complete_card, _fit_card_bytes
+from ..cardkit.builder import (
+    LOADING_ELEMENT_ID,
+    TOOL_PANEL_ELEMENT_ID,
+    _fit_card_bytes,
+    build_background_card,
+    build_complete_card,
+    build_cron_card,
+    build_streaming_card_v2,
+    split_complete_card,
+)
 from ..cardkit.markdown import (
     _downgrade_tables,
     optimize_markdown_style,
@@ -542,7 +551,7 @@ class StreamingController:
                             seg.el_id,
                         )
                         break
-            self._handle_flush_error(e)
+            self._handle_flush_error(e, session=session)
             # 卡片元素总数超限（300305）：element_count 追踪失真导致卡片实际元素数
             # 超过飞书硬上限，当前卡已无法写入任何新元素。强制拆卡到新卡继续流式。
             if e.code == CARDKIT_ELEMENT_LIMIT_TOTAL and not session.split_disabled:
@@ -892,10 +901,19 @@ class StreamingController:
         finally:
             session.split_disabled = False  # 取消/异常/失败均恢复拆卡能力
 
-    def _handle_flush_error(self, e: FeishuAPIError) -> None:
+    def _handle_flush_error(self, e: FeishuAPIError, session: CardSession | None = None) -> None:
         if e.code == CARDKIT_RATE_LIMITED:
             return
         if e.code == CARDKIT_STREAMING_CLOSED:
+            # WO-0916-HARDEN-01 A2：300309 不再静默——记 warning 并打观测标志
+            # （服务端已关流式，后续 stream_element 都会撞此码）。本批次只加观测，
+            # 不动重建逻辑，避免范围膨胀。
+            if session is not None:
+                session.streaming_closed_seen = True
+            _logger.warning(
+                "CardKit streaming mode already closed (code=300309); "
+                "further stream updates will keep failing until re-sync"
+            )
             return
         if e.code == CARDKIT_ELEMENT_LIMIT_TOTAL:
             _logger.warning("CardKit card total element limit exceeded (code=300305)")
@@ -913,7 +931,7 @@ class StreamingController:
             self._flush_deferred_background_reviews(session)
             self._cleanup_session(session)
 
-    def _complete_header_enabled(self, session: "CardSession", all_tool_steps: list) -> bool:
+    def _complete_header_enabled(self, session: CardSession, all_tool_steps: list) -> bool:
         """完成态卡片是否显示顶部 header. 快回复(耗时 < header_min_duration 且无工具调用)时隐藏."""
         if not self._cfg.header_enabled:
             return False

@@ -15,8 +15,74 @@ __all__ = [
     "_find_tables_outside_code_blocks",
     "_split_long_text",
     "_strip_invalid_image_keys",
+    "clamp_utf8",
     "optimize_markdown_style",
 ]
+
+
+def clamp_utf8(text: str, max_bytes: int = 7000, preserve_tail: bool = True) -> str:
+    """按 UTF-8 字节数钳制文本——二分找字节安全边界，绝不切断多字节字符.
+
+    WO-0916-HARDEN-01 A3（设计借鉴 aiduPOP (monkey2jack, MIT) cardkit/md.py clamp_utf8）：
+    中文 3 字节/字、emoji 4 字节/字，字符级预算在飞书 JSON 侧会膨胀爆掉；
+    preserve_tail=True 用于完成态封卡（60% 头 + 40% 尾 + 中段省略标记，
+    确保开头背景与末尾结论都不丢）；False 用于流式渐进截断。
+    任何输入不抛异常；text 在预算内时原样返回（零误伤）。
+    """
+    if len(text.encode("utf-8")) <= max_bytes:
+        return text
+
+    if not preserve_tail:
+        suffix = "\n\n…（内容过长已截断，防卡片溢出）…"  # noqa: RUF001
+        budget = max_bytes - len(suffix.encode("utf-8"))
+        if budget <= 0:
+            return suffix[: max(0, max_bytes)]
+        lo, hi = 0, len(text)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if len(text[:mid].encode("utf-8")) <= budget:
+                lo = mid
+            else:
+                hi = mid - 1
+        return text[:lo] + suffix
+
+    # 首尾双保：60% 头 + 40% 尾 + 中段省略标记
+    omission_tag = "\n\n…（中段已省略，保留开头与末尾，防卡片溢出）…\n\n"  # noqa: RUF001
+    tag_bytes = len(omission_tag.encode("utf-8"))
+    net_budget = max_bytes - tag_bytes
+    if net_budget <= 0:
+        # 极端小预算：退化为纯尾部截断
+        lo, hi = 0, len(text)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            if len(text[:mid].encode("utf-8")) <= max_bytes:
+                lo = mid
+            else:
+                hi = mid - 1
+        return text[:lo]
+
+    head_budget = int(net_budget * 0.60)
+    tail_budget = net_budget - head_budget
+
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if len(text[:mid].encode("utf-8")) <= head_budget:
+            lo = mid
+        else:
+            hi = mid - 1
+    head_text = text[:lo]
+
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if len(text[-mid:].encode("utf-8")) <= tail_budget:
+            lo = mid
+        else:
+            hi = mid - 1
+    tail_text = text[-lo:] if lo > 0 else ""
+
+    return head_text + omission_tag + tail_text
 
 
 def _find_tables_outside_code_blocks(text: str) -> list[tuple[int, int, str]]:

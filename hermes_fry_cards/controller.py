@@ -8,7 +8,7 @@ import threading
 import time
 from collections.abc import Callable, Coroutine, Iterator
 from concurrent.futures import Future as ConcurrentFuture
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +24,8 @@ from .streaming.text import strip_reasoning_tags
 
 _logger = logging.getLogger("hermes_fry_cards")
 _CARD_CREATION_WAIT_SEC = 10.0
+# WO-0916-HARDEN-01 A5：中断重定向映射上限——长跑进程防无界增长，超限按插入序淘最老
+_INTERRUPT_MAP_MAX = 200
 
 
 class StreamCardController(StreamingController):
@@ -36,6 +38,7 @@ class StreamCardController(StreamingController):
         self._sessions: dict[str, CardSession] = {}
         self._session_keys: dict[str, CardSession] = {}
         self._interrupt_map: dict[str, str] = {}
+        self._interrupt_order: list[str] = []  # A5：插入序跟踪，用于淘汰最老
         self._initialized = False
         self._init_lock = threading.Lock()
         self._session_ttl = self._cfg.card_duration_sec
@@ -419,7 +422,133 @@ class StreamCardController(StreamingController):
         if not session.footer.get("model"):
             session.footer["model"] = ""
 
-        return await self._complete_session_after_creation(session)
+        result = await self._complete_session_after_creation(session)
+        # WO-0916-HARDEN-01 A4 + R-1（WO-0916-HARDEN-01-R，对应红队 B-2/M-7）：
+        # /stop 只终止目标 key 的卡，同 chat 其它残留卡片会话会永远转圈——
+        # 收尾后把【本 chat】的残留一并清掉（chat 过滤，不打扰其它 chat 的流式卡）。
+        self.force_cleanup_all_sessions(chat_id=session.chat_id, reason="session_aborted")
+        return result
+
+    def force_cleanup_all_sessions(
+        self, *, chat_id: str | None = None, reason: str = "force"
+    ) -> None:
+        """Force-seal and cleanup non-terminal card sessions.
+
+        WO-0916-HARDEN-01 A4（语义参考 aiduPOP (monkey2jack, MIT) v2.4.4
+        controller/core.py force_cleanup_all_sessions，实现按本仓结构自写）：
+        遍历非终态 session → ABORT → 异步 seal；seal 失败也要 close_streaming
+        兜底（spinner 兜底灭）；双失败记 error 不抛。
+
+        WO-0916-HARDEN-01-R R-1：chat_id 非 None 时只清该 chat 的残留（/stop
+        场景，防止误杀其它 chat 正在流式的卡）；None 保留全局语义供显式运维。
+        """
+        snapshot = list(self._sessions.items())
+        seen: set[int] = set()
+        for _mid, session in snapshot:
+            if id(session) in seen:
+                continue
+            seen.add(id(session))
+            if chat_id is not None and session.chat_id != chat_id:
+                continue
+            if session.state.is_terminal:
+                continue
+            _logger.info(
+                "force_cleanup_all_sessions: aborting dangling session msg=%s state=%s reason=%s",
+                session.message_id[:12],
+                session.state,
+                reason,
+            )
+            session.state = SessionState.ABORTED
+            session.flush.mark_completed()
+            self._fire_and_forget(self._force_seal_one(session, reason), session._loop)
+
+    async def _force_seal_one(self, session: CardSession, reason: str) -> None:
+        """单个残留 session 的 seal + 兜底灭 spinner（A4 + 整改令 R-3/M-2）。
+
+        生产链路 _complete_session_wait → _do_complete_card 吞尽内部重试后
+        **返回 False 而不抛异常**——兜底必须判返回值，旧实现挂在 except 上
+        是永不可达的死代码（红队 M-2：假绿灯）。异常路径同时保留（防御）。
+        """
+        sealed = False
+        try:
+            sealed = await self._complete_session_wait(session)
+        except Exception:
+            _logger.warning(
+                "force_cleanup seal failed: msg=%s reason=%s",
+                session.message_id[:12],
+                reason,
+                exc_info=True,
+            )
+        if not sealed and session.card_id:
+            try:
+                await self._emergency_close_streaming(session)
+            except Exception:
+                # 双失败：只记 error 不抛（收尾路径不得反向炸宿主）
+                _logger.error(
+                    "force_cleanup close_streaming also failed: msg=%s card=%s",
+                    session.message_id[:12],
+                    session.card_id[:12],
+                    exc_info=True,
+                )
+        self._cleanup_session(session)
+
+    async def _emergency_close_streaming(self, session: CardSession) -> None:
+        """Last-resort cleanup: close streaming to remove loading spinner.
+
+        WO-0916-HARDEN-01 A4（语义参考 aiduPOP v2.4.4 _emergency_close_streaming）：
+        seal 失败时关闭流式模式，让「转圈三点」停下来。
+        """
+        if not session.card_id or self._client is None:
+            return
+        try:
+            session.sequence += 1
+            await self._client.cardkit_close_streaming(
+                session.card_id, sequence=session.sequence
+            )
+            _logger.info(
+                "emergency_close_streaming: closed card=%s msg=%s",
+                session.card_id[:12],
+                session.message_id[:12],
+            )
+        except Exception:
+            _logger.warning("emergency_close_streaming failed", exc_info=True)
+            raise
+
+    def _forget_interrupt_key(self, old_message_id: str) -> None:
+        """整改令 R-4（M-5）：删除 _interrupt_map 条目的唯一出口——order 与 map 同生命周期。
+
+        两条清理路径（_dispose_session stale_keys、完成消费 pop）必须走这里，
+        否则 order 残留幽灵 key 无界增长、溢出淘汰循环空转。
+        """
+        self._interrupt_map.pop(old_message_id, None)
+        with suppress(ValueError):
+            self._interrupt_order.remove(old_message_id)
+
+    def _record_interrupt(self, old_message_id: str, new_message_id: str) -> None:
+        """有界 + LRU 写入（A5 基座 + 整改令 R-4/M-6）。
+
+        命中/改写已有 key → move_to_end（LRU touch）；溢出时从最久未触碰端
+        起淘汰，**跳过 value 仍指向活跃 session 的条目**——中断风暴不得误淘
+        重定向链头（红队 M-6：FIFO 按插入序淘链头会断活跃链）。
+        """
+        if old_message_id in self._interrupt_order:
+            self._interrupt_order.remove(old_message_id)
+        self._interrupt_order.append(old_message_id)
+        self._interrupt_map[old_message_id] = new_message_id
+        idx = 0
+        while len(self._interrupt_map) > _INTERRUPT_MAP_MAX and idx < len(self._interrupt_order):
+            key = self._interrupt_order[idx]
+            target = self._interrupt_map.get(key)
+            if target is None:
+                # 幽灵 order 条目（map 已清）：直接摘掉
+                self._interrupt_order.pop(idx)
+                continue
+            holder = self._sessions.get(target)
+            if holder is not None and not holder.state.is_terminal:
+                idx += 1  # 活跃链：不淘（宁可暂时超限也不断活跃重定向）
+                continue
+            self._interrupt_order.pop(idx)
+            self._interrupt_map.pop(key, None)
 
     def on_interrupted(
         self,
@@ -473,7 +602,7 @@ class StreamCardController(StreamingController):
                     new_message_id[:12],
                 )
 
-        self._interrupt_map[old_message_id] = new_message_id
+        self._record_interrupt(old_message_id, new_message_id)
         for key, val in list(self._interrupt_map.items()):
             if val == old_message_id and key != old_message_id:
                 self._interrupt_map[key] = new_message_id
@@ -677,9 +806,10 @@ class StreamCardController(StreamingController):
         if session_key and self._session_keys.get(session_key) is session:
             del self._session_keys[session_key]
             removed_any = True
+        # 整改令 R-4（M-5）：stale 键必须走统一出口，order 与 map 同生命周期
         stale_keys = [key for key, value in self._interrupt_map.items() if value == session.message_id]
         for key in stale_keys:
-            del self._interrupt_map[key]
+            self._forget_interrupt_key(key)
             removed_any = True
         session.flush.mark_completed()
         if session.image_resolver:
@@ -713,7 +843,10 @@ class StreamCardController(StreamingController):
         if session is not None and session.state != SessionState.COMPLETED and session.state != SessionState.ABORTED:
             return session
 
-        redirected_id = self._interrupt_map.pop(message_id, None) if message_id else None
+        # 整改令 R-4（M-5）：完成消费走统一出口，order 与 map 同生命周期
+        redirected_id = self._interrupt_map.get(message_id) if message_id else None
+        if message_id is not None and redirected_id is not None:
+            self._forget_interrupt_key(message_id)
         if redirected_id is not None:
             _logger.info(
                 "on_completed: redirect msg=%s -> msg=%s",

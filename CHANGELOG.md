@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.3.6] - 2026-09-16
+
+### 安全 / Security
+- **工具面板脱敏收口（借鉴 aiduPOP，WO-0916-HARDEN-01 A1/R-5）**
+  - `redact_inline_secrets` 新增 JSON 冒号形态（`"api_key": "…"`）与 URL query 参数
+    （`?token=/&api_key=` 等）打码——工具输出经 json.dumps 后最常见的密钥形态此前裸上卡；
+    良性参数（`?q=secret` 值是搜索词）零误伤。
+  - `_sanitize_detail` 所有 sanitizer 分支出口统一脱敏（此前仅 command 分支）；
+    `_build_display_block` text/result/error 三路径代码块内同样收口（执行证据宁可误杀）。
+
+### 修复 / Fixed
+- **CardKit 瞬态错误救回（A2/R-2）**：300309/300313/300314/300317 入瞬态白名单；
+  元素未持久化竞态（300313/300314）走 (0.2,0.2,0.2) 短平快档；重试骨架重写为
+  while+跨档共享预算（最坏总调用与基线同界，交错码场景不放大）。
+- **完成卡字节级截断（A3）**：新增 `clamp_utf8` 二分 UTF-8 安全边界（绝不切半字符），
+  answer 单元素 7000B、panel 全局 8000B 预算从最老步骤折叠保最近 2 步——根治中文
+  3 字节膨胀（24K 字符≈72KB 撑爆 30KB 整卡上限）类溢出断屏。
+- **/stop 残留卡片清理（A4/R-1/R-3）**：`force_cleanup_all_sessions(chat_id=…)` 按会话
+  所在 chat 隔离清理（不误杀其它 chat 流式卡）；seal 返回 False 即走
+  `_emergency_close_streaming` 兜底灭 loading spinner，双失败记 error 不抛。
+- **中断映射有界（A5/R-4）**：`_interrupt_map` 上限 200，LRU touch + 淘汰跳过活跃链，
+  `_forget_interrupt_key` 统一删除出口接入 dispose 与完成消费两路径，杜绝幽灵键泄漏。
+- 观测：flush 撞 300309 不再静默丢弃，记 warning 并置 `session.streaming_closed_seen`。
+
+### 测试 / Tests
+- 新增 `tests/test_harden_*` 8 文件 72 用例（含红队两审场景钉死回归）；全量 654 passed。
+- 流程：对拍 aiduPOP v2.5 产出借鉴清单 → 施工 → 红队一审（2 blocker+7 must-fix）→
+  整改 R-1..R-5 → 红队二审 accept_with_fixes → 督导扫尾。工单 WO-0916-HARDEN-01(-R)。
+
+---
+
 ## [0.3.5] - 2026-09-15
 
 ### 新增 / Added

@@ -45,14 +45,28 @@ _OPEN_APIS_SUFFIX = "/open-apis"
 CARDKIT_GATEWAY_TIMEOUT = 2200
 CARDKIT_INTERNAL_ERROR = 1663
 CARDKIT_SERVER_INTERNAL_ERROR = 300000
+CARDKIT_STREAMING_CLOSED = 300309  # 卡片流式模式已关闭（间歇性时序竞态）
+# WO-0916-HARDEN-01 A2：瞬态白名单扩容（语义参考 aiduPOP (monkey2jack, MIT) feishu/client.py:106-133）
+CARDKIT_SEQUENCE_CONFLICT = 300317  # sequence 冲突（并发写竞态，重试有界可救）
+CARDKIT_ELEMENT_NOT_FOUND = 300313  # 元素不存在（add 后服务端未持久化竞态）
+CARDKIT_ELEMENT_NOT_FOUND_ALT = 300314  # delete/update 引用不存在元素（同上竞态）
 CARDKIT_TRANSIENT_ERROR_CODES = frozenset(
     {
         CARDKIT_GATEWAY_TIMEOUT,
         CARDKIT_INTERNAL_ERROR,
         CARDKIT_SERVER_INTERNAL_ERROR,
+        CARDKIT_SEQUENCE_CONFLICT,
+        CARDKIT_STREAMING_CLOSED,  # 300309：间歇性时序竞态，单次重试可救（seal/batch 路径重试有界不放大）
+        CARDKIT_ELEMENT_NOT_FOUND,  # 300313：元素未持久化竞态，走短退避档
+        CARDKIT_ELEMENT_NOT_FOUND_ALT,  # 300314：同上
     }
 )
 _TRANSIENT_RETRY_DELAYS_SEC = (0.15, 0.5, 1.0)
+# 300313/300314 分档：元素刚 add 服务端未持久化的竞态，短平快重试（aiduPOP client.py:132 同款语义）
+_ELEMENT_NOT_FOUND_RETRY_DELAYS_SEC = (0.2, 0.2, 0.2)
+# WO-0916-HARDEN-01-R R-2（M-1）：跨档共享的重试预算上限（1 初始 + 3 重试 = 最坏 4 次调用，
+# 满足 ≤5 约束；旧实现切档 retries_used=1 清零，交错码序列可打到 7 次）
+_MAX_TRANSIENT_RETRIES = 3
 
 # token 失效：飞书后台保存权限/发版/停启用会立即吊销所有已发出的 tenant_token
 FEISHU_TOKEN_INVALID_CODE = 99991663
@@ -88,7 +102,6 @@ CARDKIT_RATE_LIMITED = 230020  # 频控
 CARDKIT_CONTENT_FAILED = 230099  # 卡片内容创建失败（通用码，需检查子错误）
 CARDKIT_ELEMENT_LIMIT = 11310  # 子码: 卡片元素数量超限
 CARDKIT_ELEMENT_LIMIT_TOTAL = 300305  # 独立码: 卡片元素总数超限（总元素数 > 硬上限）
-CARDKIT_STREAMING_CLOSED = 300309  # 卡片流式模式已关闭
 MSG_NOT_FOUND = 1000023  # 消息不存在/已删除
 
 
@@ -138,16 +151,27 @@ class FeishuClient:
         return json.dumps(obj, ensure_ascii=False)
 
     async def _checked_call(self, operation: str, call: Any) -> Any:
-        """Run a Feishu SDK call and retry transient CardKit/Lark server errors."""
-        attempts = len(_TRANSIENT_RETRY_DELAYS_SEC) + 1
-        last_error: FeishuAPIError | None = None
-        for attempt in range(attempts):
+        """Run a Feishu SDK call and retry transient CardKit/Lark server errors.
+
+        WO-0916-HARDEN-01 A2 + 整改令 R-2（M-1）：300313/300314（元素未持久化
+        竞态）首撞时切换到短退避档 (0.2,0.2,0.2)，其余白名单码走常规档
+        (0.15,0.5,1.0)；**重试预算跨档连续计数、切档不清零**——切档本身的那次
+        等待同样消耗一格，单次 _checked_call 最坏总调用 = 1 初始 + 3 重试 = 4 ≤5
+        （旧实现 retries_used=1 在交错码序列下把已烧预算清零，最坏打到 7 次）。
+        语义与 aiduPOP (monkey2jack, MIT) client.py:229 对齐：失败→按档退避→重试、
+        有界抛出；tier 至多切换一次，不放大写入量。
+        用 while 而非基线 for 骨架：分档语义要求 delays 在循环体内按撞码重绑、
+        retries_used 跨档连续累加（for+固定 range 的迭代预算无法表达该语义）。
+        """
+        delays = _TRANSIENT_RETRY_DELAYS_SEC
+        element_tier = False
+        retries_used = 0
+        while True:
             resp = await call()
             try:
                 self._check(resp, operation)
                 return resp
             except FeishuAPIError as exc:
-                last_error = exc
                 # token 被飞书侧吊销（后台发版/权限变更立即失效所有已发 token）：
                 # 清 SDK 进程内 token 缓存后重试一次，SDK 会重新获取新 token，无需重启网关
                 if exc.code == FEISHU_TOKEN_INVALID_CODE:
@@ -161,20 +185,33 @@ class FeishuClient:
                     resp = await call()
                     self._check(resp, operation)
                     return resp
-                if exc.code not in CARDKIT_TRANSIENT_ERROR_CODES or attempt >= attempts - 1:
+                if exc.code in (CARDKIT_ELEMENT_NOT_FOUND, CARDKIT_ELEMENT_NOT_FOUND_ALT) and not element_tier:
+                    # 首撞元素竞态码：整轮切换到短退避档——首撞后的等待即新档第一个退避，
+                    # 该等待同样计入总预算（R-2：不清零、跨档连续计数），预算仍有界
+                    if retries_used >= _MAX_TRANSIENT_RETRIES:
+                        raise
+                    element_tier = True
+                    delays = _ELEMENT_NOT_FOUND_RETRY_DELAYS_SEC
+                    _logger.info(
+                        "%s element race code=%s, switching to short retry tier",
+                        operation,
+                        exc.code,
+                    )
+                    await asyncio.sleep(delays[0])
+                    retries_used += 1
+                    continue
+                if exc.code not in CARDKIT_TRANSIENT_ERROR_CODES or retries_used >= _MAX_TRANSIENT_RETRIES:
                     raise
-                delay = _TRANSIENT_RETRY_DELAYS_SEC[attempt]
                 _logger.warning(
                     "%s transient Feishu API error code=%s, retrying attempt=%d/%d delay=%.2fs",
                     operation,
                     exc.code,
-                    attempt + 2,
-                    attempts,
-                    delay,
+                    retries_used + 2,
+                    _MAX_TRANSIENT_RETRIES + 1,
+                    delays[retries_used],
                 )
-                await asyncio.sleep(delay)
-        assert last_error is not None
-        raise last_error
+                await asyncio.sleep(delays[retries_used])
+                retries_used += 1
 
     def invalidate_token_cache(self) -> None:
         """清空 lark-oapi SDK 的进程内 token 缓存，下次请求强制重新获取 tenant_token.

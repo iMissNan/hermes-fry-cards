@@ -427,9 +427,12 @@ async def test_on_session_aborted_only_stops_matching_session_key() -> None:
             assert await ctrl.on_session_aborted(session_key="session:first") is True
 
     assert ctrl._sessions["first"].state == SessionState.ABORTED
-    assert ctrl._sessions["second"].state == SessionState.IDLE
+    # 规格出处：WO-0916-HARDEN-01 A4 + 整改令 R-1（WO-0916-HARDEN-01-R）——
+    # on_session_aborted 追调 force_cleanup_all_sessions(chat_id=session.chat_id)：
+    # 两条 session 同属 "shared-chat"，按【同 chat 残留一并清】语义仍为 ABORT
+    # （跨 chat 不受打扰的钉死用例见 tests/test_harden_a4_cleanup.py::TestChatScopedCleanupR1）。
+    assert ctrl._sessions["second"].state == SessionState.ABORTED
     assert "session:first" not in ctrl._session_keys
-    assert ctrl._session_keys["session:second"] is ctrl._sessions["second"]
     complete.assert_awaited_once_with(ctrl._sessions["first"])
 
 

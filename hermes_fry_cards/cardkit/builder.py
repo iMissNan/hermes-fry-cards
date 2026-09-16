@@ -13,6 +13,7 @@ from .i18n import _LOCALES, _T, _i18n, _t
 from .markdown import (
     _downgrade_tables,
     _split_long_text,
+    clamp_utf8,
     optimize_markdown_style,
 )
 
@@ -31,6 +32,13 @@ _LOADING_IMG_KEY = "img_v3_02vb_496bec09-4b43-4773-ad6b-0cdd103cd2bg"
 #     当次返回成功但已静默顶过 200，此后该卡所有写入一律 300305；
 #   - 20 步 ≈143 嵌套，给完成卡的推理面板/答案分块/footer 留足余量。
 TOOL_PANEL_MAX_STEPS = 20
+# WO-0916-HARDEN-01 A3：完成卡单段 markdown 元素的字节预算（与 2400 字符 ≈7200 字节口径对齐，
+# 中文 3 字节/字下飞书 CardKit 单元素保守值）。
+_ANSWER_ELEMENT_BUDGET_BYTES = 7000
+# WO-0916-HARDEN-01 A3：工具面板 children 总字节预算——步数封顶防不住 N 个中等输出的
+# 字节膨胀（设计借鉴 aiduPOP (monkey2jack, MIT) cardkit/elements.py panel 预算层），
+# 超预算从最老步骤折叠，至少保留最近 2 步。
+_PANEL_BUDGET_BYTES = 8000
 # 200860「card over max size」实测（2026-09-15）：全量卡 JSON 148KB 过 / 150KB 拒。
 # 安全线取 140KB，给结构开销与编码膨胀留余量。
 CARDKIT_SAFE_BYTES = 140 * 1024
@@ -829,6 +837,9 @@ def build_complete_card(
             has_answer = True
             content = _downgrade_tables(optimize_markdown_style(seg.text))
             for chunk in _split_long_text(content):
+                # WO-0916-HARDEN-01 A3：单段按 UTF-8 字节钳制（中文 3 字节膨胀坑——
+                # 字符级 2400 预算在中文下可膨胀到 7200+ 字节，飞书按字节计）
+                chunk = clamp_utf8(chunk, _ANSWER_ELEMENT_BUDGET_BYTES)
                 elements.append({"tag": "markdown", "content": chunk, "text_size": body_text_size})
 
     # 推理+工具合并成底部一个统一面板（在答案之后、footer 之前）
@@ -875,6 +886,17 @@ def build_complete_card(
             # payload 封顶（与流式面板同口径）：seal 全量重建灌入全部历史步骤会直接
             # 300305/200860 被拒 → 旧卡永远停在转圈态（今天 4 次 seal failed 实证）。
             tool_steps_total, _omitted_steps = cap_tool_steps(tool_steps_total)
+            # WO-0916-HARDEN-01 A3：字节预算第二层——步数封顶防不住 N 个中等输出的
+            # 字节膨胀，超 _PANEL_BUDGET_BYTES 从最老步骤折叠（保最近 2 步）。
+            def _steps_bytes(steps: list[ToolDisplayStep]) -> int:
+                return sum(
+                    len(json.dumps(el, ensure_ascii=False).encode("utf-8"))
+                    for s in steps
+                    for el in _build_tool_step_elements(s)
+                )
+
+            while len(tool_steps_total) > 2 and _steps_bytes(tool_steps_total) > _PANEL_BUDGET_BYTES:
+                tool_steps_total = tool_steps_total[1:]
             tool_panel = _build_tool_panel(tool_steps_total, tool_elapsed_ms, expanded=panel_expanded, element_id=None)
             if "elements" in tool_panel:
                 unified_children.extend(tool_panel["elements"])

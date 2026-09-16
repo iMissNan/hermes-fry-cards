@@ -67,6 +67,7 @@ class CardSession:
         "split_disabled",
         "split_index",
         "state",
+        "streaming_closed_seen",
         "synthetic",
         "tool_panel_created",
         "tool_panel_estimate",
@@ -114,6 +115,9 @@ class CardSession:
         self.split_index: int = 0
         self.clarify_pending_split: bool = False
         self.tool_panel_created: bool = False
+        # WO-0916-HARDEN-01 A2：300309（streaming 已关闭）观测标志——
+        # _handle_flush_error 命中时置 True，本批次只做观测不动重建逻辑
+        self.streaming_closed_seen: bool = False
 
     @property
     def has_card(self) -> bool:
