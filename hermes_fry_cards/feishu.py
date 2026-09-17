@@ -50,6 +50,11 @@ CARDKIT_STREAMING_CLOSED = 300309  # 卡片流式模式已关闭（间歇性时�
 CARDKIT_SEQUENCE_CONFLICT = 300317  # sequence 冲突（并发写竞态，重试有界可救）
 CARDKIT_ELEMENT_NOT_FOUND = 300313  # 元素不存在（add 后服务端未持久化竞态）
 CARDKIT_ELEMENT_NOT_FOUND_ALT = 300314  # delete/update 引用不存在元素（同上竞态）
+CARDKIT_SCHEMA_ERROR = 300315  # 卡片 Schema 非法属性 OR element not found for insert_before
+CARDKIT_RATE_LIMIT = 99991400  # 飞书开放平台每接口频控限制（HTTP 400）
+
+_RE_ELEMENT_NOT_FOUND = re.compile(r"not find elementID\s*:\s*([a-zA-Z0-9_\-]+)", re.IGNORECASE)
+
 CARDKIT_TRANSIENT_ERROR_CODES = frozenset(
     {
         CARDKIT_GATEWAY_TIMEOUT,
@@ -59,6 +64,7 @@ CARDKIT_TRANSIENT_ERROR_CODES = frozenset(
         CARDKIT_STREAMING_CLOSED,  # 300309：间歇性时序竞态，单次重试可救（seal/batch 路径重试有界不放大）
         CARDKIT_ELEMENT_NOT_FOUND,  # 300313：元素未持久化竞态，走短退避档
         CARDKIT_ELEMENT_NOT_FOUND_ALT,  # 300314：同上
+        CARDKIT_RATE_LIMIT,  # 99991400：接口频率限制，退避可救
     }
 )
 _TRANSIENT_RETRY_DELAYS_SEC = (0.15, 0.5, 1.0)
@@ -200,17 +206,22 @@ class FeishuClient:
                     await asyncio.sleep(delays[0])
                     retries_used += 1
                     continue
-                if exc.code not in CARDKIT_TRANSIENT_ERROR_CODES or retries_used >= _MAX_TRANSIENT_RETRIES:
+                # 300309=streaming already closed: keep at most 1 fast retry then fail fast
+                max_retries = 1 if exc.code == CARDKIT_STREAMING_CLOSED else _MAX_TRANSIENT_RETRIES
+                if exc.code not in CARDKIT_TRANSIENT_ERROR_CODES or retries_used >= max_retries:
                     raise
+                delay = delays[retries_used] if retries_used < len(delays) else delays[-1]
+                if exc.code == CARDKIT_STREAMING_CLOSED:
+                    delay = 0.05
                 _logger.warning(
                     "%s transient Feishu API error code=%s, retrying attempt=%d/%d delay=%.2fs",
                     operation,
                     exc.code,
                     retries_used + 2,
-                    _MAX_TRANSIENT_RETRIES + 1,
-                    delays[retries_used],
+                    max_retries + 1,
+                    delay,
                 )
-                await asyncio.sleep(delays[retries_used])
+                await asyncio.sleep(delay)
                 retries_used += 1
 
     def invalidate_token_cache(self) -> None:
@@ -369,10 +380,22 @@ class FeishuClient:
         """局部更新 CardKit 卡片（增删改组件）."""
         body_builder = BatchUpdateCardRequestBody.builder().sequence(sequence).actions(self._dumps(actions))
         request = BatchUpdateCardRequest.builder().card_id(card_id).request_body(body_builder.build()).build()
-        await self._checked_call(
-            "cardkit_batch_update",
-            lambda: self._client.cardkit.v1.card.abatch_update(request),
-        )
+        try:
+            await self._checked_call(
+                "cardkit_batch_update",
+                lambda: self._client.cardkit.v1.card.abatch_update(request),
+            )
+        except FeishuAPIError as e:
+            # 300315 + not find elementID: 服务端该元素（通常为 loading_hint / 占位符）
+            # 已在之前或并发操作中被删除，视为幂等成功放行，杜绝永久卡死在 loading 态。
+            if e.code == CARDKIT_SCHEMA_ERROR and _RE_ELEMENT_NOT_FOUND.search(str(e)):
+                _logger.info(
+                    "cardkit_batch_update: 300315 element not found (already cleared), safely treated as success: card_id=%s msg=%s",
+                    card_id[:12],
+                    e,
+                )
+                return
+            raise
 
     async def cardkit_close_streaming(self, card_id: str, sequence: int = 0) -> None:
         """关闭 CardKit 卡片的流式模式."""

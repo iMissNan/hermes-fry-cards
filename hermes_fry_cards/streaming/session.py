@@ -44,6 +44,7 @@ class CardSession:
     """单条消息的卡片会话状态."""
 
     __slots__ = (
+        "_completion_dispatched",
         "_loop",
         "anchor_id",
         "card_id",
@@ -91,6 +92,7 @@ class CardSession:
         self.state = SessionState.IDLE
         self.card_msg_id: str | None = None
         self.card_id: str | None = None
+        self._completion_dispatched: bool = False  # CAS 防重锁，保证单会话封卡协程只调度一次
         self.tool_use = ToolUseTracker()
         self.tool_panel_estimate: int = 0  # 合并面板模式下工具面板当前的总元素估算
         self.flush = FlushController(throttle_ms=CARDKIT_MS, loop=loop)

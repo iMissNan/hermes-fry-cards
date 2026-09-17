@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable
 _logger = logging.getLogger("hermes_fry_cards")
 
 
-CARDKIT_MS = 0.100  # CardKit 流式 API 的刷新间隔
+CARDKIT_MS = 0.100  # CardKit 流式 API 的刷新间隔（单位：秒；400.100 事故见 wo/2026-09-17-flush-400s-defused）
 LONG_GAP_MS = 2.000  # 超过此间隔 → 认为是长时间空闲
 BATCH_AFTER_GAP_MS = 0.300  # 长时间空闲后等待这个时间再 flush
 

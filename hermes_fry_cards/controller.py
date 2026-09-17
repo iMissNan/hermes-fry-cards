@@ -913,9 +913,18 @@ class StreamCardController(StreamingController):
             import time as _t
             _duration = _t.time() - session.created_at
         prev_model = session.footer.get("model") or ""
+        _resolved_model = model or prev_model
+        # 穿透显示：记录「最后一口应答」的真实模型（如 my-com1 实际由 z-ai/glm-5.3 应答）
+        try:
+            from .model_tracker import resolve_actual as _resolve_actual
+
+            _actual = _resolve_actual(_resolved_model)
+        except Exception:
+            _actual = ""
         session.footer = {
             "duration": _duration,
-            "model": model or prev_model,
+            "model": _resolved_model,
+            **({"model_actual": _actual} if _actual else {}),
             **({"input_tokens": tokens.get("input_tokens")} if tokens else {}),
             **({"output_tokens": tokens.get("output_tokens")} if tokens else {}),
             **({"context_used": context.get("used_tokens")} if context else {}),
@@ -923,7 +932,11 @@ class StreamCardController(StreamingController):
         }
 
     def _complete_session(self, session: CardSession) -> None:
-        """异步完成当前流式卡片."""
+        """异步完成当前流式卡片（带 CAS 防重锁，保证单会话生命周期内只分发一次）."""
+        if getattr(session, "_completion_dispatched", False):
+            _logger.debug("complete_session already dispatched, skipping: msg=%s", session.message_id[:12])
+            return
+        session._completion_dispatched = True
         session.flush.mark_completed()
         self._fire_and_forget(self._complete_session_after_creation(session), session._loop)
 
@@ -940,8 +953,15 @@ class StreamCardController(StreamingController):
 
     def _prune_stale_sessions(self) -> None:
         now = time.time()
-        stale = [mid for mid, s in self._sessions.items() if mid is not None and now - s.created_at > self._session_ttl]
+        stale = [mid for mid, s in self._sessions.items() if mid is not None and now - getattr(s, "created_at", 0) > self._session_ttl]
         for mid in stale:
+            s = self._sessions.get(mid)
+            if s and hasattr(s, "state") and not getattr(s.state, "is_terminal", False):
+                # 超过 2x TTL 且仍未终态，强制熔断销毁
+                if now - getattr(s, "created_at", 0) > 2 * self._session_ttl:
+                    _logger.warning("force_terminated_2x_ttl: msg=%s age=%.0fs", mid[:12], now - s.created_at)
+                    if hasattr(s, "mark_failed"):
+                        s.mark_failed("ttl_expired")
             _logger.warning("stale_pruned: msg=%s ttl=%.0fs", mid[:12], self._session_ttl)
             self._cleanup(mid)
 

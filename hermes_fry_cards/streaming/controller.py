@@ -924,9 +924,17 @@ class StreamingController:
                 _logger.warning("CardKit card element limit exceeded")
 
     async def _do_complete_card(self, session: CardSession) -> bool:
-        """完成流式卡片：close streaming + 全量重建卡片（保持 segments 顺序）."""
+        """完成流式卡片：close streaming + 全量重建卡片（带 30s 硬超时保护）."""
         try:
-            return await self._do_complete_card_inner(session)
+            return await asyncio.wait_for(self._do_complete_card_inner(session), timeout=30.0)
+        except asyncio.TimeoutError:
+            _logger.error(
+                "card_complete_timeout: msg=%s card=%s exceeded 30s limit, forcing cleanup",
+                session.message_id[:12],
+                session.card_id[:12] if session.card_id else "?",
+            )
+            session.mark_failed("complete_timeout")
+            return False
         finally:
             self._flush_deferred_background_reviews(session)
             self._cleanup_session(session)
@@ -987,6 +995,7 @@ class StreamingController:
             width_mode=self._cfg.width_mode,
         )
 
+        streaming_closed = False
         streaming_closed = False
         for attempt in range(3):
             try:

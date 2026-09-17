@@ -272,6 +272,38 @@ def _display_model(name: str) -> str:
     return name
 
 
+def _pretty_actual_model(name: str) -> str:
+    """真实应答模型的显示名：别名优先，未命中取最后一段路径（不带 ⇲ 图标）."""
+    if not name:
+        return name
+    from ..config import Config
+
+    cfg = Config()
+    lowered = name.lower()
+    for key, alias in cfg.model_aliases().items():
+        if key and key in lowered:
+            return alias
+    parts = [p for p in name.split("/") if p]
+    return parts[-1] if parts else name
+
+
+def _display_model_pair(footer_data) -> str:
+    """组合名 + 真实应答模型 →「my-com1/GLM-5.3」；无穿透信息时行为与旧版一致."""
+    data = footer_data or {}
+    base = data.get("model") or ""
+    actual = data.get("model_actual") or ""
+    if base:
+        base_disp = _display_model(base)
+    else:
+        base_disp = _pretty_actual_model(actual) if actual else ""
+    if not actual:
+        return base_disp
+    actual_disp = _pretty_actual_model(actual)
+    if not actual_disp or actual_disp == base_disp:
+        return base_disp
+    return f"{base_disp}/{actual_disp}"
+
+
 def _collapsible_panel(
     *,
     expanded: bool,
@@ -494,10 +526,22 @@ def _escape_md(value: str) -> str:
     return re.sub(r"([`*_{}\[\]<>])", r"\\\1", value.replace("\\", "\\\\"))
 
 
+_REASONING_DISPLAY_LIMIT = 4000  # 单个思考面板最大显示字符数（防雷霆长思考撑爆卡片）
+
+
+def _truncate_reasoning(text: str) -> str:
+    """截断过长推理文本，防止雷霆超长思考撑爆飞书卡片容量或卡死."""
+    if len(text) <= _REASONING_DISPLAY_LIMIT:
+        return text
+    suffix = f"\n\n... (思考过长已截断，原长 {len(text)} 字)"
+    return text[:_REASONING_DISPLAY_LIMIT - len(suffix)] + suffix
+
+
 def _build_reasoning_panel(
     text: str, elapsed_ms: float = 0, *, expanded: bool = False, element_id: str | None = None,
     text_element_id: str | None = REASONING_TEXT_ELEMENT_ID,
 ) -> dict:
+    text = _truncate_reasoning(text)
     if elapsed_ms > 0:
         d = _format_elapsed(elapsed_ms)
         en_label, zh_label = _T["thought_for"][0].format(d), _T["thought_for"][1].format(d)
@@ -597,9 +641,7 @@ def _render_footer_field(
         return None, None
 
     if name == "model":
-        v = data.get("model") or None
-        if v:
-            v = _display_model(v)
+        v = _display_model_pair(data) or None
         return v, v
 
     if name == "tokens":
@@ -870,18 +912,46 @@ def build_complete_card(
             border_color = "green"
         # 构建统一面板内容：先推理轮次，再工具步骤
         unified_children: list[dict] = []
-        for i, rnd in enumerate(reasoning_rounds):
-            if rnd["text"].strip():
-                # 复用流式阶段 text_el_id，避免与已完成卡片上现有元素重名（Duplicate ID）。
-                # 流式阶段 text_el_id 形如 reasoning_{c}_text，非空；若为空则用带索引后缀的唯一 ID，
-                # 绝不回落到固定 REASONING_TEXT_ELEMENT_ID，防止单轮 reasoning 在 merge 更新下重复。
-                text_el_id = rnd.get("text_el_id") or f"reasoning_text_{i}"
+        # 短片段平滑聚合（<30 字符不独立开面板，与紧随的思考聚合输出，消除碎片感）
+        MERGE_THRESHOLD = 30
+        buffered_text = ""
+        buffered_elapsed_ms = 0.0
+        buffered_el_id = None
+
+        def _flush_reasoning_buffer():
+            nonlocal buffered_text, buffered_elapsed_ms, buffered_el_id
+            if buffered_text.strip():
                 unified_children.append(_build_reasoning_panel(
-                    text=rnd["text"],
+                    text=buffered_text,
+                    elapsed_ms=buffered_elapsed_ms,
+                    expanded=panel_expanded,
+                    text_element_id=buffered_el_id or f"reasoning_merged_{len(unified_children)}",
+                ))
+            buffered_text = ""
+            buffered_elapsed_ms = 0.0
+            buffered_el_id = None
+
+        for i, rnd in enumerate(reasoning_rounds):
+            txt = rnd["text"].strip()
+            if not txt:
+                continue
+            text_el_id = rnd.get("text_el_id") or f"reasoning_text_{i}"
+            if len(txt) < MERGE_THRESHOLD:
+                if not buffered_text:
+                    buffered_el_id = text_el_id
+                    buffered_text = txt
+                else:
+                    buffered_text += "\n\n" + txt
+                buffered_elapsed_ms += rnd.get("elapsed_ms") or 0.0
+            else:
+                _flush_reasoning_buffer()
+                unified_children.append(_build_reasoning_panel(
+                    text=txt,
                     elapsed_ms=rnd["elapsed_ms"],
                     expanded=panel_expanded,
                     text_element_id=text_el_id,
                 ))
+        _flush_reasoning_buffer()
         if tool_steps_total:
             # payload 封顶（与流式面板同口径）：seal 全量重建灌入全部历史步骤会直接
             # 300305/200860 被拒 → 旧卡永远停在转圈态（今天 4 次 seal failed 实证）。
@@ -901,9 +971,7 @@ def build_complete_card(
             if "elements" in tool_panel:
                 unified_children.extend(tool_panel["elements"])
         # header: 🍟 model · 💭n · 🔧n · ⏳ context · ⏱️ elapsed
-        model_name = (footer_data or {}).get("model") or ""
-        if model_name:
-            model_name = _display_model(model_name)
+        model_name = _display_model_pair(footer_data)
         # 优先用 tool_elapsed_ms，否则用 footer_data 的 duration，否则用 session 总耗时
         elapsed_ms = tool_elapsed_ms
         if not elapsed_ms and footer_data:
@@ -1003,26 +1071,61 @@ def _format_run_time(run_time: str) -> str:
 def build_cron_card(
     content: str, *, task_name: str = "", run_time: str = ""
 ) -> dict[str, Any]:
-    """Cron 推送用的极简静态卡片 — schema 2.0，可选 header + markdown 内容."""
+    """Cron 推送用的极简静态卡片 — schema 2.0，支持动态状态色 + 超长折叠."""
     card: dict[str, Any] = {
         "schema": "2.0",
         "config": {"wide_screen_mode": True, "locales": _LOCALES},
         "body": {"elements": []},
     }
+    
+    # 动态状态配色判定：包含典型报错关键词为红色，包含告警为黄色，正常为默认蓝色
+    lowered = content.lower()
+    is_failed = any(err in lowered for err in ("failed", "error", "traceback", "exception", "超时", "失败", "401 unauthorized"))
+    is_warning = any(warn in lowered for warn in ("warning", "warn", "告警", "降级", "degraded"))
+    
+    if is_failed:
+        tpl = "carmine"
+    elif is_warning:
+        tpl = "yellow"
+    else:
+        tpl = "blue"
+
     header_parts = [p for p in (task_name, _format_run_time(run_time)) if p]
     if header_parts:
+        icon = "❌" if is_failed else ("⚠️" if is_warning else ":Alarm:")
         card["header"] = {
-            "title": {"tag": "lark_md", "content": ":Alarm: " + " · ".join(header_parts)},
-            "template": "blue",
+            "title": {"tag": "lark_md", "content": f"{icon} " + " · ".join(header_parts)},
+            "template": tpl,
         }
     if not content.strip():
         return card
     summary = content[:120].replace("\n", " ").replace("```", "").strip()
     if summary:
         card["config"]["summary"] = {"content": summary}
-    for chunk in _split_long_text(optimize_markdown_style(content)):
-        if chunk.strip():
-            card["body"]["elements"].append({"tag": "markdown", "content": chunk})
+    
+    # 内容排版：如果内容超过 8 行或超过 800 字，自动折叠进 collapsible_panel，防止群聊刷屏
+    lines = content.strip().splitlines()
+    if len(lines) > 8 or len(content) > 800:
+        first_few = "\n".join(lines[:3])
+        if first_few.strip():
+            card["body"]["elements"].append({"tag": "markdown", "content": optimize_markdown_style(first_few)})
+        
+        detail_panel = _collapsible_panel(
+            expanded=False,
+            title_el={
+                "tag": "plain_text",
+                "content": "📋 查看完整执行日志与输出",
+                "text_color": "grey",
+                "text_size": "notation",
+            },
+            elements=[{"tag": "markdown", "content": optimize_markdown_style(content)}],
+            vertical_spacing="4px",
+        )
+        card["body"]["elements"].append(detail_panel)
+    else:
+        for chunk in _split_long_text(optimize_markdown_style(content)):
+            if chunk.strip():
+                card["body"]["elements"].append({"tag": "markdown", "content": chunk})
     return card
 
 

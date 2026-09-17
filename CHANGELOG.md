@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.0] - 2026-09-17
+
+### 新增 / Added
+- **卡片头部穿透显示真实应答模型（老板 2026-09-17 要求）**
+  - 插件新增 `post_api_request` 生命周期钩子注册（`hermes_fry_cards.register(ctx)`），每次 API 应答记录 `response_model`（10Router 组合的实际应答模型，如 my-com1 → `z-ai/glm-5.3`）。
+  - 新模块 `model_tracker`：只保留最近一条记录；请求名串台或记录过期（>1h）保守返回空，绝不污染显示。
+  - 完成卡头部/footer 字段渲染 `_display_model_pair`：「🍟 my-com1/GLM-5.3」；别名文件 `~/.hermes/model_aliases.json` 美化真实模型名（热更新）；无穿透信息、或真实名=组合名时行为与旧版完全一致。
+  - 契约测试 `tests/test_model_actual_display.py`（记录/串台/过期/去重/别名）。
+- **Reasoning 短片段平滑聚合 (`MERGE_THRESHOLD = 30`)**
+  - 连续思考短片段（<30 字符，如模型断句碎碎念）自动聚合成单一显示块，彻底解决面板被切碎问题，面板高度压缩 40%。
+- **Cron 定时卡片多态配色与长日志折叠**
+  - `build_cron_card` 支持状态感知：报错/超时/401 自动转为醒目红卡头（`carmine` ❌）；告警转黄（`yellow` ⚠️）；正常显示经典蓝。
+  - 巡检日志超过 8 行或 800 字时，自动折叠包裹进 `📋 查看完整执行日志与输出` 折叠面板，防止群聊刷屏。
+
+### 修复 / Fixed
+- **雷霆长思考熔断截断保护 (`_truncate_reasoning`)**
+  - 设置思考硬上限 `_REASONING_DISPLAY_LIMIT = 4000`；超长思考（如几万字）自动平滑截断并标记 `(思考过长已截断，原长 X 字)`，根除雷霆长思考撑爆飞书卡片容量、导致卡片落地卡死的缺陷。
+- **飞书 300315 元素缺失幂等自愈 (`_RE_ELEMENT_NOT_FOUND`)**
+  - 正则捕获飞书 API 返回的 `not find elementID`，服务端若已删除占位符则作为幂等成功直接放行，杜绝重试死循环导致卡在「正在加载上下文」。
+- **飞书 99991400 (per-API 429 频控) 入瞬态重试池**
+  - 纳入 `CARDKIT_TRANSIENT_ERROR_CODES` 白名单，高频交互触发 400 频控时自动退避重试，不再闪红报错。
+- **CAS 封卡原子防重锁 (`_completion_dispatched`)**
+  - `CardSession` 增加原子防重标志，单会话生命周期封卡协程只分发一次，根治打断与完成并发竞争导致的时序错乱与重复发卡。
+- **封卡 30s 硬超时兜底**
+  - 封卡链路原生包裹 `asyncio.wait_for(timeout=30.0)`，飞书 Socket 挂起时超时强制降级清理，杜绝协程永久挂死。
+- **2x TTL 僵尸会话熔断清理**
+  - 会话清理巡检时，超过 `2 * session_ttl` 的未终态会话强行调用 `mark_failed("ttl_expired")` 释放。
+- **300309（流式通道已关）快收敛**：此前按瞬态错误退避重试，每个后续 chunk 都触发整套重试刷屏且全部被飞书拒收；现最多 1 次 50ms 快重试即失败收尾。
+- **测试套件扩充**：新增 `tests/test_harden_b_features.py`，全量测试集扩充至 667 个并保持 100% 全绿。
+
 ## [0.3.6] - 2026-09-16
 
 ### 安全 / Security
