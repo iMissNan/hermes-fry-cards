@@ -150,18 +150,30 @@ def _panel_card(steps_count: int, output_unit: str = "汉" * 500) -> dict:
     )
 
 
+def _tool_panel_children(card: dict) -> list[dict]:
+    """取统一面板内嵌套 🔧 工具面板的 children（上游 0.4.0 交错语义下的预算断言位）.
+
+    旧结构（0.3.x）：工具步骤元素平铺在统一面板 children 里；
+    新结构（0.4.0）：每组工具是统一面板内的嵌套 collapsible_panel，预算断言平移到嵌套 children。
+    """
+    for el in card["body"]["elements"]:
+        if el.get("tag") != "collapsible_panel":
+            continue
+        for child in el.get("elements", []):
+            if child.get("tag") == "collapsible_panel" and "🔧" in str(child.get("header", {})):
+                return child.get("elements", [])
+    return []
+
+
 class TestPanelBudgetBytes:
     def test_constant_exists(self) -> None:
         assert _PANEL_BUDGET_BYTES == 8000
 
     def test_huge_steps_folded_from_oldest(self) -> None:
-        """40 步 × 500 汉字输出 → panel children 字节 ≤ 8000 且保最近 2 步."""
+        """40 步 × 500 汉字输出 → 工具面板 children 字节 ≤ 8000 且保最近 2 步."""
         card = _panel_card(40)
-        panels = [
-            el for el in card["body"]["elements"] if el.get("tag") == "collapsible_panel"
-        ]
-        assert panels
-        children = panels[0]["elements"]
+        children = _tool_panel_children(card)
+        assert children
         children_bytes = sum(len(json.dumps(c, ensure_ascii=False).encode()) for c in children)
         assert children_bytes <= _PANEL_BUDGET_BYTES
         # 至少保最近 2 步（每步含 500 汉字输出 ≈1.5KB）
@@ -170,8 +182,7 @@ class TestPanelBudgetBytes:
     def test_small_steps_untouched(self) -> None:
         """3 步小输出不折叠."""
         card = _panel_card(3)
-        panels = [el for el in card["body"]["elements"] if el.get("tag") == "collapsible_panel"]
-        children = panels[0]["elements"]
+        children = _tool_panel_children(card)
         assert len(children) >= 3
 
     def test_card_total_bytes_bounded(self) -> None:

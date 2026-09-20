@@ -3,7 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Hermes](https://img.shields.io/badge/Hermes-%E2%89%A50.14.0-2463eb)](https://github.com/NousResearch/hermes-agent)
 [![Python](https://img.shields.io/badge/Python-%E2%89%A53.11-blue)](https://www.python.org/)
-[![当前版本](https://img.shields.io/badge/Release-v0.3.0-2463eb?logo=github&logoColor=white)](https://github.com/techysy/hermes-fry-cards/releases)
+[![当前版本](https://img.shields.io/badge/Release-v0.4.0-2463eb?logo=github&logoColor=white)](https://github.com/techysy/hermes-fry-cards/releases)
 
 > 🍟 Hermes Gateway 飞书流式卡片插件 — CardKit v2.0 实时流式消息
 
@@ -31,15 +31,24 @@
 | 🎨 **可定制样式** | header/footer、文字大小、宽度模式、字段布局均可配置 |
 | 🎯 **状态色框** | 顶部 header 根据状态自动着色：流式中蓝色、完成绿色、中断/错误红色 |
 | ⏱️ **快捷回复去标题** | 无工具调用且耗时低于阈值时隐藏顶部状态栏，回复更干净 |
-| 🛡️ **群聊安全边界** | 群内 @bot 自动注入安全提示，不泄露 key/密码/内网 IP（modular Hermes 0.21+） |
+| 🛡️ **群聊安全边界** | 群内 @bot 自动注入安全提示，不泄露 key/密码/内网 IP（modular Hermes 0.21+，Studio 可视化开关） |
 | ❓ **Clarify 按钮卡片** | 选项提问渲染为可点击按钮卡片（单选/多选勾选/「其他」内嵌输入框 + toast 反馈），补齐飞书适配器缺失的 `send_clarify` 原生交互 |
 | 🔐 **审批卡片点击修复** | 审批按钮点击改用交互回调鉴权（原版误用群消息准入策略导致点击被吞），并为受理/过期/无权限/拒绝补全 toast 反馈 |
+| 🎛️ **Studio 工作坊** | `studio` 命令一键起本地 Web UI：配置表单 + **真 builder 预览**（4 场景 × 三态）+ 状态诊断与一键重启；写回安全五件套 |
+| 🏷️ **模型别名时段人设** | `model_aliases.json` 子串匹配 + 北京时间时段对象自动切换显示名（DeepSeek 峰谷：峰段梁文锋⚡️/谷段梁文谷⚡️），与 openclaw 格式互通，Studio 可视化编辑 |
+| 🧱 **Markdown 防爆引擎** | 超限表格无损压缩为字段列表 + 字节级 18KB 内容预算（流式渐进截断/完成态首尾双保），杜绝 ~30KB 卡片 JSON 溢出断屏 |
+| 🔀 **工作流交错渲染** | 完成态统一面板按真实发生顺序交错展现思考与工具组（💭→🔧→💭→🔧），时间线不再被堆叠打乱 |
 
 ## 🏗️ 架构总览
 
-![hermes-fry-cards 架构：Hermes Gateway 事件经 AST hook 注入层进入 StreamCardController，streaming/ 运行时节流编排，cardkit/ 构建卡片 JSON，经飞书 CardKit v2.0 API 交付用户端流式卡片；cron 推送与失败回落路径独立标注](assets/architecture.svg)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/architecture.svg">
+  <img src="assets/architecture-light.svg" alt="hermes-fry-cards 架构：Hermes Gateway 事件经 AST hook 注入层进入 StreamCardController，streaming/ 运行时节流编排，cardkit/ 构建卡片 JSON，经飞书 CardKit v2.0 API 交付用户端流式卡片；cron 推送与失败回落路径独立标注">
+</picture>
 
-> v0.3.0 新增：快捷回复去标题（`header.min_duration`）按耗时条件隐藏顶部状态栏；群聊安全边界（modular Hermes 0.21+）向 ephemeral system prompt 注入输出边界，私聊不受影响。
+> 🆕 v0.4.0：**Studio 可视化配置工作坊**（`studio` 命令，真 builder 预览/白名单安全写回/状态诊断）、
+> **Markdown 防爆引擎**（无损表格压缩 + 字节级预算）、**模型别名时段人设**（openclaw 格式互通）、
+> **工作流交错渲染**（#10）与群聊安全边界可视化。架构图随 GitHub 明暗主题自动切换。
 
 ---
 
@@ -55,7 +64,7 @@ curl -fsSL https://raw.githubusercontent.com/techysy/hermes-fry-cards/main/insta
 
 ```bash
 # 指定版本（默认 main）
-curl -fsSL .../install.sh | FRY_REF=v0.3.3 bash
+curl -fsSL .../install.sh | FRY_REF=v0.4.0 bash
 # 自动探测失败时手动指定解释器
 curl -fsSL .../install.sh | HERMES_PYTHON=/path/to/python3 bash
 ```
@@ -133,6 +142,7 @@ display:
 | `footer.enabled` | 底部元数据栏 | `false` |
 | `panel_expanded` | 完成态面板保持展开 | `false` |
 | `chat_types` | 允许发流式卡片的聊天类型（`source.chat_type`，如 `dm`/`group`）；缺省全部类型都发，列表外类型回落纯文本 | 缺省 = 全部 |
+| `content_lang` | 内容层提示语文案语言（表格转换引导、超长截断提示等正文内嵌文案）：`zh` / `en`。UI 词条走卡片级 i18n 由飞书客户端自动选语言，正文内嵌文案无法如此，故按部署方偏好定死 | `zh` |
 | `width_mode` | 卡片宽度 (`default` / `compact` / `fill`) | `default` |
 | `show_tool_use` | 展示工具调用面板 | `true` |
 | `show_reasoning` | 展示推理过程 | `false` |
@@ -141,24 +151,40 @@ display:
 | `max_reasoning_panels` | 最多保留的独立推理面板数（超出后合并，防元素溢出） | `3` |
 | `unified_panel_min_duration` | 统一面板最小展示耗时（秒）；无工具调用或耗时 ≤ 此值不显示统一面板 | `5` |
 | `truncate_model_name` | 截断模型名（`nvidia/moonshotai/kimi-k3` → `⇲kimi-k3`） | `true` |
+| `model_aliases_enabled` | 模型别名总开关；`false` 时忽略别名整体回落截断（配置保留） | `true` |
+| `gateway.group_security_boundary.enabled` | 群聊安全边界总开关（群聊回复套输出边界，私聊不受影响） | `false` |
+| `gateway.group_security_boundary.allow_chats` | 豁免群白名单（`oc_xxx`，一行一个；这些群不套边界） | `[]` |
 
 ### 模型别名配置
 
-独立于 `config.yaml`，别名写在 `~/.hermes/model_aliases.json`：
+独立于 `config.yaml`，别名写在 `~/.hermes/model_aliases.json`（**Studio → 配置 → 模型别名** 可视化编辑，无需手写）：
 
 ```json
 {
   "longcat": "哈基米",
-  "gemini": "哈基米"
+  "mimo": "小虾米",
+  "deepseek": {
+    "name": "梁文谷⚡️",
+    "timeAliases": [
+      { "days": [1, 2, 3, 4, 5], "start": "09:00", "end": "12:00", "name": "梁文锋⚡️" },
+      { "days": [1, 2, 3, 4, 5], "start": "14:00", "end": "18:00", "name": "梁文锋⚡️" }
+    ]
+  }
 }
 ```
 
-- **匹配**：key 对完整模型名做大小写不敏感子串匹配（`longcat` → `or/lc/LongCat-2.0` 命中）
-- **优先级**：别名命中 → 显示别名；未命中 → 回落截断逻辑
-- **热更新**：每次渲染重读，改完文件即生效，无需重启网关
+- **匹配**：key 对完整模型名做大小写不敏感子串匹配，按插入顺序第一条命中（`longcat` → `or/lc/LongCat-2.0`）
+- **时段人设**：值可为对象，按**北京时间（UTC+8）** HH:MM + 星期自动切换显示名——典型用途是
+  DeepSeek **峰谷价标识**（峰段梁文锋⚡️ / 谷段梁文谷⚡️）。`days` 支持数组 `[1,2,3,4,5]`（0=周日）
+  或字符串 `"1-5"` / `"0,6"` / `"1-5,0"`；`start`/`end` 为 `[start, end)` 左闭右开、支持跨午夜、
+  起止相等 = 全天；规则都不命中回落 `name`（即"其他时间"）。**格式与 openclaw/claw-fry-cards 的
+  `modelAliases` 配置逐字兼容，同一份 JSON 两边通用**
+- **优先级**：别名命中 → 显示别名；未命中 → 回落截断逻辑；`display.model_aliases_enabled: false`
+  可整体关闭别名（回落截断，配置保留）
+- **热更新**：每次渲染重读，改文件或 Studio 保存即生效，无需重启网关
 
 > 完整路径：`~/.hermes/model_aliases.json`
-| [模型别名](#-与上游-hermes-lark-streaming-的差异) | `~/.hermes/model_aliases.json` 子串匹配，命中优先于截断 | 无 |
+| [模型别名](#-与上游-hermes-lark-streaming-的差异) | `~/.hermes/model_aliases.json` 子串匹配 + **时段人设（北京时间自动切换）**，命中优先于截断 | 无 |
 
 ### 样式效果示例
 
@@ -180,6 +206,31 @@ display:
 
 ![A minimal chat card on a pale gray background with a circular profile image on the left. The status line reads 回复 余师评：那不是什么 是高清背景图, with a green checkmark and the label 已完成 above the assistant response. The message body is in Chinese and discusses a background image, with a highlighted sentence mentioning LICENCE and repo-audit-fix. The overall tone is calm and professional, with soft green styling and a clean messaging layout.](assets/quick_reply.png)
 
+## 🎛️ Studio 可视化配置工作坊
+
+本地 Web UI 调卡片配置 + 实时预览 + 状态诊断。零第三方依赖（纯 stdlib `http.server` + 原生 HTML/CSS/JS）：
+
+```bash
+$HERMES_PYTHON -m hermes_fry_cards studio                 # 默认 http://127.0.0.1:8765，自动开浏览器
+$HERMES_PYTHON -m hermes_fry_cards studio --port 9000 --no-browser
+```
+
+| 页签 | 能力 |
+|------|------|
+| **配置** | 流式开关 / 状态栏（Header·Footer 合并组）/ **统一面板**（模型·推理·工具·上下文的全套开关，元数据默认由它承载）/ **模型别名**（含时段人设星期芯片编辑器 + 总开关）/ **群聊安全边界**（开关 + 豁免群白名单，置底）等**白名单键**的表单化编辑 |
+| **预览** | 服务端**真实 builder** 渲染（与线上卡片同一代码路径，非前端模拟）：快捷回复 / 工作流交错 / 多表格压缩 / 超长截断 四场景 × 流式·完成·出错态 |
+| **状态** | hook 注入状态、verify 兼容性、飞书凭据、Hermes 环境一览 + 一键重启网关 |
+
+**写回安全五件套**：服务端严格校验（未知键/非法值 → 400）→ config.yaml 解析失败即拒写（409，保护凭证）→
+写前自动备份（`~/.hermes/backups/fry_studio/`，轮转保留 20 份）→ 只深合并白名单键（手写配置原样保留）→
+原子落盘（tmp + fsync + rename）。安全面：仅监听 `127.0.0.1`、Host 门防 DNS rebinding、无 CORS 头、
+body ≤1MB、`nosniff`。
+
+> ⚠️ 保存会重写整个 config.yaml，**YAML 注释会丢失**（UI 有显著提示）；结构类配置保存后仍需
+> `hermes gateway restart`（见下方热更新说明）。`display.*` 展示类键保存后免重启即时生效。
+
+---
+
 ## 🛡️ 群聊安全边界（modular Hermes 0.21+）
 
 群友 @ bot 时，回复默认会带输出边界：**不透露 API key / 密码 / 令牌 / 服务器内网 IP / 凭据 /
@@ -199,6 +250,9 @@ gateway:
 - `allow_chats`：**豁免群**。适合多 Agent 协作开发群——群里多个 Agent 互相交流、
   需要传凭据 / 内部状态干活时不加约束。填入群的 `chat_id`（飞书 `oc_xxx`）即放行。
 
+> 也可以在 **Studio → 配置 → 🛡️ 群聊安全边界** 直接开关和编辑豁免群（白名单只写
+> `enabled`/`allow_chats` 两键，你手写的 `text` 自定义边界文案与 `gateway` 下其他配置原样保留）。
+
 > 实现：对 `gateway/run_turn_runner.py::_combined_ephemeral_prompt` 注入 hook，走 ephemeral
 > system prompt（不碰持久缓存）。**逻辑在插件内**，`hermes update` 不会覆盖——升级后重跑
 > `hermes_fry_cards install` 即重打。
@@ -213,6 +267,7 @@ $HERMES_PYTHON -m hermes_fry_cards verify     # 验证兼容性
 $HERMES_PYTHON -m hermes_fry_cards install    # 注入 hook
 $HERMES_PYTHON -m hermes_fry_cards uninstall  # 移除 hook
 $HERMES_PYTHON -m hermes_fry_cards status     # 查看状态
+$HERMES_PYTHON -m hermes_fry_cards studio     # 可视化配置工作坊（127.0.0.1:8765）
 ```
 
 ---
@@ -250,11 +305,13 @@ $HERMES_PYTHON -m pip uninstall hermes-fry-cards
   → 终态卡片（token/耗时/上下文）
 ```
 
-### 🛡️ 稳定性保障（v0.1.1）
+### 🛡️ 稳定性保障
 
-- **session 生命周期统一管理**：注册/清理单一入口、幂等可重入；中断接管不误删新会话映射；异常残留的终态会话允许重建，不再需要重启网关恢复
-- **flush 竞态防护**：完成标记与刷新请求交叉时不会误触发多余 CardKit 调用；同一份数据不会被重复刷新
+- **session 生命周期统一管理**：注册/清理单一入口、幂等可重入；中断接管不误删新会话映射；异常残留的终态会话允许重建，不再需要重启网关恢复（v0.1.1）
+- **flush 竞态防护**：完成标记与刷新请求交叉时不会误触发多余 CardKit 调用；同一份数据不会被重复刷新（v0.1.1）
 - **失败原因可追溯**：卡片失败时记录首次失败原因（`mark_failed(reason=...)`），回退网关纯文本是统一决策点
+- **Markdown 防爆引擎 + 300305 主动拆卡**：元素/字节双预算，超限前主动拆分（v0.4.0）
+- **Studio 写回安全五件套**：严格校验 / 拒写保护 / 备份轮转 / 白名单深合并 / 原子落盘（v0.4.0）
 
 排查问题时可直接按以下标准化日志事件在 `~/.hermes/logs/agent.log` 中检索：
 
@@ -288,7 +345,7 @@ $HERMES_PYTHON -m pip uninstall hermes-fry-cards
 
 ### ✅ 支持热更新（改 config.yaml 后下一条消息即生效）
 
-以下 `display` 显示 / 样式类配置项，每次渲染都会从磁盘重读，**无需重启**：
+以下 `display` 显示 / 样式类配置项，每次渲染都会从磁盘重读，**无需重启**（通过 Studio 保存这些键同样免重启）：
 
 | 配置项 | 说明 |
 |--------|------|
@@ -299,6 +356,7 @@ $HERMES_PYTHON -m pip uninstall hermes-fry-cards
 | `max_reasoning_panels` | 最多独立推理面板数（防元素溢出） |
 | `unified_panel_min_duration` | 统一面板最小展示耗时（秒） |
 | `truncate_model_name` | 截断模型名 |
+| 模型别名总开关 | `display.model_aliases_enabled` 每次渲染重读 |
 | 模型别名 | `~/.hermes/model_aliases.json` 每次渲染重读，改文件即生效 |
 
 ### ⚠️ 需要重启网关（`hermes gateway restart`）
@@ -308,6 +366,7 @@ $HERMES_PYTHON -m pip uninstall hermes-fry-cards
 - **插件代码修改**（`git pull` 更新、改源码）
 - `streaming.enabled` 开关
 - `streaming.chat_types` 聊天类型过滤（群聊/私聊是否发卡片）
+- `streaming.content_lang` 内容层提示语语言
 - `streaming.header` / `footer` / `body` / `width_mode` 等 streaming 结构类配置
 - 飞书凭据 `app_id` / `app_secret`
 
@@ -333,7 +392,7 @@ hermes gateway restart
 | Hook 丢失 | Hermes 升级覆盖了已 patch 的文件 | `verify` + `install` + 重启 |
 | 流式卡片变纯文本 | CardKit 创建失败 | 日志检索 `card_reply_failed` / `fallback_to_text` 看具体原因，检查飞书凭据是否正确 |
 | `status` 显示 `warning` | CLI 使用了错误的 Python 解释器 | 用 `$HERMES_PYTHON` 重新执行 |
-| 卡片一直 loading 不收尾 | 完成更新失败（如元素 Duplicate ID） | 日志检索 `card_complete_failed`，确认版本 ≥ v0.1.1（含竞态修复） |
+| 卡片一直 loading 不收尾 | 完成更新失败（如元素 Duplicate ID） | 日志检索 `card_complete_failed`，确认版本 ≥ v0.1.1（含竞态修复）；0.4.0 起另有防爆引擎与工作流交错渲染 |
 
 ---
 
@@ -366,7 +425,7 @@ hermes gateway restart
 | **上下文进度条** | `show_context` 独立开关 + `context_display_mode` 三种模式（`text` / 渐变阴影 `bar` / `text_bar`），智能单位（<1M 用 k） | ❌ 仅 footer 纯文本百分比，无开关 |
 | **推理面板上限** | `max_reasoning_panels`（默认 3），超出合并进最后一个面板——兼容 deepseek-v4-flash 等不分段思考模型，防 300305 元素溢出 | ❌ 无限制，长思考必溢出 |
 | **模型名截断** | `truncate_model_name`：`nvidia/moonshotai/kimi-k3` → `⇲kimi-k3`，修复移动端换行 | ❌ 全称显示 |
-| **模型别名** | `~/.hermes/model_aliases.json` 独立 JSON 配置：`{"longcat": "哈基米", "gemini": "哈基米"}`，key 对模型名做大小写不敏感子串匹配，命中显示别名（如 LongCat → 哈基米），未命中回落截断逻辑；每次渲染重读，改文件即生效 | ❌ 无 |
+| **模型别名** | `~/.hermes/model_aliases.json` 独立 JSON 配置：`{"longcat": "哈基米"}` 子串匹配 + **时段人设对象**（北京时间 HH:MM + 星期自动切换，如峰谷 梁文锋⚡️/梁文谷⚡️，与 openclaw/claw-fry-cards 格式逐字兼容），带总开关；每次渲染重读，Studio 可视化编辑 | ❌ 无 |
 
 行为默认值：`show_reasoning` 默认 **true**（上游默认 false）。
 

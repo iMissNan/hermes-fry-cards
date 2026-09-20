@@ -7,7 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.4.0] - 2026-09-17
+## [0.4.0] - 2026-09-20
+
+> **算法与架构大改版**：渲染层引入 Markdown 防爆引擎（无损表格压缩 + 字节级内容预算），
+> 新增 **Studio 可视化配置工作坊**（真 builder 预览 / 白名单安全写回 / 状态诊断），
+> 模型别名支持时段人设（与 openclaw/claw-fry-cards 格式互通），群聊安全边界可视化。
+> **配置 schema 向后兼容**——升级无需改任何现有配置；纯新增能力，无破坏性变更。
+
+### 优化 / Changed
+- **完成态卡片统一面板按真实工作流交错渲染**（[#10](https://github.com/techysy/hermes-fry-cards/pull/10)，感谢 @JasonXX89）—
+  统一面板内从「所有思考集中在前、所有工具堆在末尾」改为按真实发生顺序交错展现：
+  `💭 思考1 → 🔧 工具组1 → 💭 思考2 → 🔧 工具组2 …`，保持复杂 Agent 执行链路的时间线一致性。
+- **工具面板标题状态感知（生成中「工具执行中」 vs 终态「工具执行」）** —
+  流式生成阶段工具折叠面板标题为 `🔧 工具执行中 · N 步`，卡片生成完毕后自动转为 `🔧 工具执行 · N 步 (Xs)`。
+
+### 新增 / Added
+- **Markdown 防爆引擎**（借鉴 [aiduPOP](https://github.com/monkey2jack/aiduPOP) 贝氏降级引擎）—
+  - **无损表格压缩**：超限表格（>5）不再包装为代码块，改为 fence 感知扫描后压缩为
+    「**Table N · Row M**」字段列表，内容完整保留且可读性更好；inline code/转义中的竖线
+    与未闭合代码围栏均正确处理；引擎异常时自动回退旧代码块方案。
+  - **字节级内容预算 `clamp_utf8`**（18KB ≈ 6000 汉字）：飞书卡片 JSON ~30KB 上限此前仅靠
+    元素数估算防护，单段超长 answer 可在拆卡触发前先撞上限。流式进行中渐进截断
+    （preserve_tail=False），完成态封卡首 60% + 尾 40% 双保（结论不丢）；
+    覆盖 `build_complete_card` / `build_cron_card` / `build_background_card` 与流式 answer flush。
+- **瞬态错误码扩充**：重试集合新增频控 `230020` 与开放平台频率限制 `99991400`（限流类错误短退避重试即可恢复）。
+- **内容层文案双语支持**：正文内嵌提示语（表格转换引导、两条截断提示）纳入 `i18n.py` 词条表，
+  新增 `streaming.content_lang`（`zh`/`en`，默认 `zh`）构建时选取——UI 词条走 `i18n_content` 双语 dict
+  由飞书客户端按 locale 渲染，markdown 正文只接受纯字符串无法如此，故按部署方偏好定死（需重启网关生效）。
+- **Studio 可视化配置工作坊**（`python -m hermes_fry_cards studio`，借鉴 [aiduPOP](https://github.com/monkey2jack/aiduPOP) studio）—
+  纯 stdlib `http.server` + 原生前端，三页签：**配置**（白名单键表单编辑，按「流式卡片 / 状态栏
+  （Header 与 Footer 合并一组、组内分节，Footer 分节带「一般不开启」提示）/ **统一面板**
+  ——模型·推理·工具·上下文全套开关** / 模型别名 / 🛡️ 群聊安全边界（`gateway.group_security_boundary`
+  白名单只写 enabled/allow_chats，手写 `text` 与 gateway 兄弟键原样保留；置底）」分组——
+  含多行 footer 字段保护与异常值原样回传；时段规则行两段式布局（星期一行[含工作日/周末快捷选择] /
+  时间+名称一行，弹性均分任何列宽不换行；兜底默认名「其他时间」置于规则列表底部）；宽屏 ≥1280px 三列布局）/ **预览**（服务端调**真实 builder** 渲染，与线上卡片同一代码路径——快捷回复 / 工作流
+  交错 / 多表格压缩 / 超长截断 × 流式·完成·出错态；overrides 只作用于渲染不落盘）/ **状态**（hook 注入
+  markers、cron/clarify、三目标 verify 兼容性、凭据、一键重启网关）。
+  写回安全五件套：严格校验 400 / 解析失败拒写 409（保护凭证）/ 写前备份轮转 20 份 / 白名单深合并
+  （手写键存活）/ tmp+fsync+rename 原子落盘；安全面仅 loopback、Host 门防 DNS rebinding、无 CORS、
+  body ≤1MB（413 有界排空防客户端写端 RST）、`nosniff`。
+  ⚠️ 保存重写 config.yaml 会丢 YAML 注释（UI 显著提示）；`display.*` 展示类键保存免重启。
+- **模型别名时段人设 + Studio 可视化编辑**（参考 [claw-fry-cards](https://github.com/techysy/claw-fry-cards) 的
+  openclaw `modelAliases` 配置，**格式逐字兼容，同一份 JSON 两边通用**）——
+  - `model_aliases.json` 值支持字符串或对象 `{name, timeAliases:[{days, start, end, name}]}`：按**北京时间
+    （固定 UTC+8，与宿主机时区无关）** HH:MM + 星期自动切换显示名（DeepSeek 峰谷价：峰段梁文锋⚡️ / 谷段
+    梁文谷⚡️）。`days` 数组（0=周日）或字符串 `"1-5"`/`"0,6"`/`"1-5,0"`，时间窗 `[start,end)` 左闭右开、
+    跨午夜、起止相等=全天，规则首中即返、不命中回落 `name`——语义与 claw `resolveModelAlias` 逐字对齐。
+  - 新增总开关 `display.model_aliases_enabled`（默认开；关闭整体回落 ⇲ 截断，配置保留，热更新）。
+  - Studio 配置页新增「模型别名」组：条目增删、🕐 时段人设模式（默认名 + 星期芯片 + 起止时间 + 时段名）、
+    空键行不提交；经 `GET/POST /api/aliases` 走严格校验（重复键/越界 days/非 HH:MM/未知字段 → 400）、
+    解析失败拒写 409、写前备份轮转、原子落盘——安全面与 config.yaml 保存完全一致。
+
+### 修复 / Fixed（Studio 真机走查）
+- **preview.js 写入缺失**导致 `app.js` 因 `window.FryPreview` 未定义整体挂掉（表单不填充、页签无响应）——补文件 + 新增全资源可达性测试。
+- **setVal 对 number input 误走 `<select>.options 分支**崩溃（`Array.prototype.forEach called on null`），表单填充死在 header 阈值行。
+- **CB0 代码围栏占位符**被 `trim()` 吃掉两端空格后正则失配，代码块泄漏 ` CB0 ` 文本——改 trim 后匹配。
+
+### 测试 / Tests
+- 新增 `tests/test_md_guard.py` 20 用例（扫描器/压缩/钳制/错误码/文案语言）+ `content_lang` 配置 5 用例
+  + 模型别名解析 16 用例（claw 同款时间锚点：半开区间/跨午夜/legacy days/固定 UTC+8/总开关优先级）
+  + `tests/test_studio.py` 91 用例（校验/拒写/备份/白名单/Host 门/路径穿越/1MB 上限/预览/别名端点/
+  群聊安全边界端点/静态资源可达性）。
+  本地全量 **681 passed**（Windows，另 2 例 Win 路径断言差异为存量）；容器 Hermes v0.21.3 全量回归
+  **701 passed** + Studio 服务冒烟（静态 4×200 / state / preview schema 2.0 / 外来 Host → 403）。
+
+## [0.4.1] - 2026-09-17（未发布·本地特性）
 
 ### 新增 / Added
 - **卡片头部穿透显示真实应答模型（老板 2026-09-17 要求）**

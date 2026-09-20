@@ -252,21 +252,22 @@ def _truncate_model(name: str) -> str:
 
 
 def _display_model(name: str) -> str:
-    """模型显示名：别名优先（~/.hermes/model_aliases.json 子串匹配），未命中回落截断逻辑.
+    """模型显示名：别名优先（~/.hermes/model_aliases.json 子串匹配，支持时段人设），未命中回落截断.
 
-    别名文件由 Config().model_aliases() 每次重读（热更新）；命中即返回别名，
-    未命中且 truncate_model_name 开启时走 _truncate_model。
+    别名文件由 Config().model_aliases() 每次重读（热更新）；对象条目读取时按北京时间
+    解析为当前时段显示名。model_aliases_enabled 关闭时整体忽略别名回落截断。
     """
     if not name:
         return name
     from ..config import Config
 
     cfg = Config()
-    aliases = cfg.model_aliases()
-    lowered = name.lower()
-    for key, alias in aliases.items():
-        if key and key in lowered:
-            return alias
+    if cfg.model_aliases_enabled:
+        aliases = cfg.model_aliases()
+        lowered = name.lower()
+        for key, alias in aliases.items():
+            if key and key in lowered:
+                return alias
     if cfg.truncate_model_name:
         return _truncate_model(name)
     return name
@@ -393,8 +394,9 @@ def _build_tool_panel(
     *,
     expanded: bool = True,
     element_id: str | None = TOOL_PANEL_ELEMENT_ID,
+    running: bool = False,
 ) -> dict:
-    en_t, zh_t = _T["tool_use"]
+    en_t, zh_t = _T["tool_running"] if running else _T["tool_use"]
     en_parts, zh_parts = [en_t], [zh_t]
     if steps:
         tpl_en, tpl_zh = _T["steps"]
@@ -804,7 +806,7 @@ def build_streaming_card_v2(
     # 工具面板放在底部（answer之后，loading之前）
     if show_tool_use:
         if tool_steps:
-            elements.append(_build_tool_panel(tool_steps, elapsed_ms))
+            elements.append(_build_tool_panel(tool_steps, elapsed_ms, running=True))
         else:
             elements.append(build_streaming_tool_use_pending_panel())
 
@@ -850,22 +852,31 @@ def build_complete_card(
     show_tool_use: bool = True,
     width_mode: str = "default",
 ) -> dict[str, Any]:
-    """完成态流式卡片 — 推理+工具合并成底部统一面板，答案在上面."""
+    """完成态流式卡片 — 推理+工具合并成底部统一面板，答案在上面.
+
+    统一面板内部按 segments 的**真实发生顺序**交错渲染：
+    💭 思考1 → 🔧 工具组1 → 💭 思考2 → 🔧 工具组2 …（对齐工作流时间线）。
+    """
     elements: list[dict] = []
     has_answer = False
     # 收集所有 reasoning rounds + tool steps，合并成一个底部统一面板
     reasoning_rounds: list[dict] = []
     tool_steps_total: list[ToolDisplayStep] = []
-    tool_elapsed_ms = 0
+    tool_elapsed_ms: int | float = 0
+    # 过程时间线：按 segments 到达顺序保序记录 reasoning / tool 组，
+    # 终态据此交错渲染（不再「先所有思考、再所有工具」两堆堆叠）。
+    timeline: list[dict] = []
 
     for seg in segments:
         if seg.type == SegmentType.REASONING:
             if seg.text:
-                reasoning_rounds.append({
+                round_entry = {
                     "text": seg.text,
                     "elapsed_ms": seg.elapsed_ms,
                     "text_el_id": seg.text_el_id,  # 复用流式阶段的 text element id，避免完成态 Duplicate ID
-                })
+                }
+                reasoning_rounds.append(round_entry)
+                timeline.append({"kind": "reasoning", "round": round_entry})
         elif seg.type == SegmentType.TOOL:
             if not show_tool_use:
                 continue
@@ -875,9 +886,15 @@ def build_complete_card(
             if steps:
                 tool_steps_total.extend(steps)
                 tool_elapsed_ms += seg.elapsed_ms or 0
+                timeline.append({
+                    "kind": "tools",
+                    "steps": steps,
+                    "elapsed_ms": seg.elapsed_ms or 0,
+                })
         elif seg.type == SegmentType.ANSWER and seg.text:
             has_answer = True
             content = _downgrade_tables(optimize_markdown_style(seg.text))
+            content = clamp_utf8(content, preserve_tail=True)
             for chunk in _split_long_text(content):
                 # WO-0916-HARDEN-01 A3：单段按 UTF-8 字节钳制（中文 3 字节膨胀坑——
                 # 字符级 2400 预算在中文下可膨胀到 7200+ 字节，飞书按字节计）
@@ -910,10 +927,12 @@ def build_complete_card(
             border_color = "yellow"
         else:
             border_color = "green"
-        # 构建统一面板内容：先推理轮次，再工具步骤
+        # 构建统一面板内容：按 timeline 真实顺序交错（💭思考 → 🔧工具组 → 💭思考 …）
         unified_children: list[dict] = []
-        # 短片段平滑聚合（<30 字符不独立开面板，与紧随的思考聚合输出，消除碎片感）
+        # 先聚合（MERGE_THRESHOLD=30：连续短思考片段合成一块，消除碎片感），
+        # 再按真实发生顺序交错进 timeline——两个增强融合不冲突。
         MERGE_THRESHOLD = 30
+        merged_rounds: list[dict] = []
         buffered_text = ""
         buffered_elapsed_ms = 0.0
         buffered_el_id = None
@@ -921,21 +940,26 @@ def build_complete_card(
         def _flush_reasoning_buffer():
             nonlocal buffered_text, buffered_elapsed_ms, buffered_el_id
             if buffered_text.strip():
-                unified_children.append(_build_reasoning_panel(
-                    text=buffered_text,
-                    elapsed_ms=buffered_elapsed_ms,
-                    expanded=panel_expanded,
-                    text_element_id=buffered_el_id or f"reasoning_merged_{len(unified_children)}",
-                ))
+                merged_rounds.append({
+                    "text": buffered_text,
+                    "elapsed_ms": buffered_elapsed_ms,
+                    "text_el_id": buffered_el_id,
+                })
             buffered_text = ""
             buffered_elapsed_ms = 0.0
             buffered_el_id = None
 
-        for i, rnd in enumerate(reasoning_rounds):
+        # 聚合只发生在时间线上相邻的思考片段之间：工具组会打断聚合（flush 缓冲），
+        # 保证 💭A → 🔧 → 💭B 的交错语义不被跨组合并破坏。
+        for entry in timeline:
+            if entry["kind"] != "reasoning":
+                _flush_reasoning_buffer()  # 工具组边界：冲刷缓冲
+                continue
+            rnd = entry["round"]
             txt = rnd["text"].strip()
             if not txt:
                 continue
-            text_el_id = rnd.get("text_el_id") or f"reasoning_text_{i}"
+            text_el_id = rnd.get("text_el_id") or ""
             if len(txt) < MERGE_THRESHOLD:
                 if not buffered_text:
                     buffered_el_id = text_el_id
@@ -945,31 +969,66 @@ def build_complete_card(
                 buffered_elapsed_ms += rnd.get("elapsed_ms") or 0.0
             else:
                 _flush_reasoning_buffer()
+                merged_rounds.append(rnd)
+        _flush_reasoning_buffer()
+
+        # 重建 timeline：聚合块替换到其首片段的原 reasoning 槽位，
+        # 被合并掉的槽位剔除（tools 槽位原序保留）。
+        _merged_idx = 0
+        _new_timeline: list[dict] = []
+        for entry in timeline:
+            if entry["kind"] != "reasoning":
+                _new_timeline.append(entry)
+                continue
+            if _merged_idx < len(merged_rounds):
+                _new_timeline.append({"kind": "reasoning", "round": merged_rounds[_merged_idx]})
+                _merged_idx += 1
+            # _merged_idx 耗尽后剩余 reasoning 槽位直接丢弃（已并入前块）
+        timeline = _new_timeline
+
+        # A3 工具面板字节预算（嫁接到组粒度：超预算从最老步骤折叠，保最近 2 步）
+        def _steps_bytes(steps: list[ToolDisplayStep]) -> int:
+            return sum(
+                len(json.dumps(el, ensure_ascii=False).encode("utf-8"))
+                for s in steps
+                for el in _build_tool_step_elements(s)
+            )
+
+        _reasoning_seq = 0
+        _tool_group_seq = 0
+        for entry in timeline:
+            if entry["kind"] == "reasoning":
+                rnd = entry["round"]
+                if not rnd["text"].strip():
+                    continue
+                # 复用流式阶段 text_el_id，避免与已完成卡片上现有元素重名（Duplicate ID）；
+                # 聚合块用首片段 ID，空则带索引后缀唯一 ID，绝不回落固定 ID 防重复。
+                text_el_id = rnd.get("text_el_id") or f"reasoning_text_{_reasoning_seq}"
+                _reasoning_seq += 1
                 unified_children.append(_build_reasoning_panel(
-                    text=txt,
-                    elapsed_ms=rnd["elapsed_ms"],
+                    text=rnd["text"],
+                    elapsed_ms=rnd.get("elapsed_ms") or 0.0,
                     expanded=panel_expanded,
                     text_element_id=text_el_id,
                 ))
-        _flush_reasoning_buffer()
-        if tool_steps_total:
-            # payload 封顶（与流式面板同口径）：seal 全量重建灌入全部历史步骤会直接
-            # 300305/200860 被拒 → 旧卡永远停在转圈态（今天 4 次 seal failed 实证）。
-            tool_steps_total, _omitted_steps = cap_tool_steps(tool_steps_total)
-            # WO-0916-HARDEN-01 A3：字节预算第二层——步数封顶防不住 N 个中等输出的
-            # 字节膨胀，超 _PANEL_BUDGET_BYTES 从最老步骤折叠（保最近 2 步）。
-            def _steps_bytes(steps: list[ToolDisplayStep]) -> int:
-                return sum(
-                    len(json.dumps(el, ensure_ascii=False).encode("utf-8"))
-                    for s in steps
-                    for el in _build_tool_step_elements(s)
+            elif entry["kind"] == "tools":
+                # 每个工具组独立成一个嵌套 🔧 面板（上游 0.4.0 交错语义），
+                # 交错在思考轮次之间，而非全部堆到末尾；
+                # 本地 A3 治理嫁接到组粒度：步数封顶 + 字节预算折叠（保最近 2 步）。
+                group_steps = entry["steps"]
+                group_steps, _omitted = cap_tool_steps(group_steps)
+                while len(group_steps) > 2 and _steps_bytes(group_steps) > _PANEL_BUDGET_BYTES:
+                    group_steps = group_steps[1:]
+                if not group_steps:
+                    continue
+                _tool_group_seq += 1
+                tool_panel = _build_tool_panel(
+                    group_steps,
+                    entry["elapsed_ms"],
+                    expanded=panel_expanded,
+                    element_id=f"tool_panel_{_tool_group_seq}",
                 )
-
-            while len(tool_steps_total) > 2 and _steps_bytes(tool_steps_total) > _PANEL_BUDGET_BYTES:
-                tool_steps_total = tool_steps_total[1:]
-            tool_panel = _build_tool_panel(tool_steps_total, tool_elapsed_ms, expanded=panel_expanded, element_id=None)
-            if "elements" in tool_panel:
-                unified_children.extend(tool_panel["elements"])
+                unified_children.append(tool_panel)
         # header: 🍟 model · 💭n · 🔧n · ⏳ context · ⏱️ elapsed
         model_name = _display_model_pair(footer_data)
         # 优先用 tool_elapsed_ms，否则用 footer_data 的 duration，否则用 session 总耗时
@@ -1102,14 +1161,13 @@ def build_cron_card(
     summary = content[:120].replace("\n", " ").replace("```", "").strip()
     if summary:
         card["config"]["summary"] = {"content": summary}
-    
-    # 内容排版：如果内容超过 8 行或超过 800 字，自动折叠进 collapsible_panel，防止群聊刷屏
+    # 内容排版双保险：先字节钳制（上游 0.4.0 防爆引擎），超 8 行/800 字再折叠进面板（本地防刷屏）
     lines = content.strip().splitlines()
     if len(lines) > 8 or len(content) > 800:
         first_few = "\n".join(lines[:3])
         if first_few.strip():
             card["body"]["elements"].append({"tag": "markdown", "content": optimize_markdown_style(first_few)})
-        
+
         detail_panel = _collapsible_panel(
             expanded=False,
             title_el={
@@ -1118,12 +1176,12 @@ def build_cron_card(
                 "text_color": "grey",
                 "text_size": "notation",
             },
-            elements=[{"tag": "markdown", "content": optimize_markdown_style(content)}],
+            elements=[{"tag": "markdown", "content": clamp_utf8(optimize_markdown_style(content))}],
             vertical_spacing="4px",
         )
         card["body"]["elements"].append(detail_panel)
     else:
-        for chunk in _split_long_text(optimize_markdown_style(content)):
+        for chunk in _split_long_text(clamp_utf8(optimize_markdown_style(content))):
             if chunk.strip():
                 card["body"]["elements"].append({"tag": "markdown", "content": chunk})
     return card
@@ -1143,7 +1201,7 @@ def build_background_card(preview: str, content: str) -> dict[str, Any]:
     summary = body[:120].replace("\n", " ").replace("```", "").strip()
     if summary:
         card["config"]["summary"] = {"content": summary}
-    for chunk in _split_long_text(optimize_markdown_style(body)):
+    for chunk in _split_long_text(clamp_utf8(optimize_markdown_style(body))):
         if chunk.strip():
             card["body"]["elements"].append({"tag": "markdown", "content": chunk})
     return card

@@ -55,6 +55,9 @@ CARDKIT_RATE_LIMIT = 99991400  # 飞书开放平台每接口频控限制（HTTP 
 
 _RE_ELEMENT_NOT_FOUND = re.compile(r"not find elementID\s*:\s*([a-zA-Z0-9_\-]+)", re.IGNORECASE)
 
+CARDKIT_RATE_LIMITED = 230020  # 频控（上游 0.4.0 入池）
+# 上游命名（99991400 的对外别名，语义与本地 CARDKIT_RATE_LIMIT 同码；两版瞬态码同义合并）
+CARDKIT_FREQUENCY_LIMITED = CARDKIT_RATE_LIMIT
 CARDKIT_TRANSIENT_ERROR_CODES = frozenset(
     {
         CARDKIT_GATEWAY_TIMEOUT,
@@ -64,7 +67,8 @@ CARDKIT_TRANSIENT_ERROR_CODES = frozenset(
         CARDKIT_STREAMING_CLOSED,  # 300309：间歇性时序竞态，单次重试可救（seal/batch 路径重试有界不放大）
         CARDKIT_ELEMENT_NOT_FOUND,  # 300313：元素未持久化竞态，走短退避档
         CARDKIT_ELEMENT_NOT_FOUND_ALT,  # 300314：同上
-        CARDKIT_RATE_LIMIT,  # 99991400：接口频率限制，退避可救
+        CARDKIT_RATE_LIMITED,  # 230020：频控（上游 0.4.0），退避可救
+        CARDKIT_RATE_LIMIT,  # 99991400：接口频率限制（两版同码），退避可救
     }
 )
 _TRANSIENT_RETRY_DELAYS_SEC = (0.15, 0.5, 1.0)
@@ -104,7 +108,6 @@ class FeishuAPIError(RuntimeError):
         return None
 
 
-CARDKIT_RATE_LIMITED = 230020  # 频控
 CARDKIT_CONTENT_FAILED = 230099  # 卡片内容创建失败（通用码，需检查子错误）
 CARDKIT_ELEMENT_LIMIT = 11310  # 子码: 卡片元素数量超限
 CARDKIT_ELEMENT_LIMIT_TOTAL = 300305  # 独立码: 卡片元素总数超限（总元素数 > 硬上限）
