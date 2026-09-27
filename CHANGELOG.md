@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [0.4.1] - 2026-09-28
 
 ### 变更 / Changed
 - **Studio 默认监听 `0.0.0.0:8765`**（原 `127.0.0.1`）— `_cmd_studio` 默认值、`run_studio_server` 默认值、
@@ -18,17 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   config.yaml 与飞书凭据，别做端口转发或公网暴露」警告与 `--host 127.0.0.1` 回退方式。
 
 ### 新增 / Added
+- **Studio systemd 用户服务模板** — 新增 `systemd/hermes-fry-cards-studio.service`，支持登录/系统启动后自动启动、异常退出自动重启和 `journalctl` 日志；默认监听 `0.0.0.0:8765`（本机 `127.0.0.1:8765`），不会自动打开浏览器。
+- **Studio 自启文档** — README 与英文文档补充安装、启用、状态检查和日志查看命令。
 - `TestWildcardBindDefaults`：守住三处默认绑 `0.0.0.0`（CLI / `run_studio_server` / systemd 模板）
   与 `_display_host` 通配地址回落 loopback。
 
-## [0.4.1] - 2026-09-23
-
-### 新增 / Added
-- **Studio systemd 用户服务模板** — 新增 `systemd/hermes-fry-cards-studio.service`，支持登录/系统启动后自动启动、异常退出自动重启和 `journalctl` 日志；默认监听 `127.0.0.1:8765`，不会自动打开浏览器。
-- **Studio 自启文档** — README 与英文文档补充安装、启用、状态检查和日志查看命令。
-
 ### 验证 / Tests
 - 验证服务模板使用 Hermes venv Python、`--no-browser` 和 `Restart=on-failure`。
+- `pytest tests/ -q` 713 passed / 0 failed（含 4 例默认绑定守护）。
 
 ---
 

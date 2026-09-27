@@ -1,13 +1,22 @@
-## 🍟 hermes-fry-cards v0.4.1（Studio 自启与保活）
+## 🍟 hermes-fry-cards v0.4.1（Studio 自启与保活 · 默认绑 0.0.0.0）
 
-> 新增 systemd 用户服务模板，让 Studio 支持开机/登录自启、异常退出自动重启，并将运行日志交给 `journalctl` 管理。
+> 新增 systemd 用户服务模板，让 Studio 支持开机/登录自启、异常退出自动重启、日志交给 `journalctl`；
+> 并把 Studio 默认监听从 `127.0.0.1` 改为 `0.0.0.0`——局域网设备直接 `http://<本机IP>:8765` 就能用。
 
 **⚙️ Studio 自启 / 保活**
 
 - 新增 `systemd/hermes-fry-cards-studio.service`
-- 默认使用 Hermes venv Python，以 `--no-browser` 常驻运行 `127.0.0.1:8765`
+- 默认使用 Hermes venv Python，以 `--no-browser` 常驻运行 `0.0.0.0:8765`（本机 `http://127.0.0.1:8765`）
 - `Restart=on-failure` + 3 秒退避，Studio 异常退出后自动拉起
 - 文档补充安装、启用、状态检查和日志查看命令
+
+**🌐 默认绑 0.0.0.0（局域网可达）**
+
+- `_cmd_studio` / `run_studio_server` / systemd 模板 `ExecStart` 三处默认 host 统一为 `0.0.0.0`
+- 本机打印与自动打开的 URL 回落 `127.0.0.1`（新增 `_display_host`），另打印一行 LAN 地址提示
+- 安全面不变：Host 门白名单 `_HOSTS_OK` 对非白名单来源一律 403（防 DNS rebinding）
+- ⚠️ Studio 可写 `config.yaml` 与飞书凭据——别做端口转发/公网暴露；只想本机用就 `--host 127.0.0.1`
+- 新增 `TestWildcardBindDefaults` 守住三处默认值
 
 升级后执行：
 
