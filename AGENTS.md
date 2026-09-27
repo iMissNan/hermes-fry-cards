@@ -15,7 +15,7 @@ $HERMES_PYTHON -m hermes_fry_cards install    # Inject hooks into run.py and cro
 $HERMES_PYTHON -m hermes_fry_cards uninstall  # Remove hooks
 $HERMES_PYTHON -m hermes_fry_cards restore    # Restore from .hermes_lark.bak backup
 $HERMES_PYTHON -m hermes_fry_cards status     # Show patch status
-$HERMES_PYTHON -m hermes_fry_cards studio     # Visual config studio (127.0.0.1:8765)
+$HERMES_PYTHON -m hermes_fry_cards studio     # Visual config studio (0.0.0.0:8765, local 127.0.0.1:8765)
 
 # Install for development
 $HERMES_PYTHON -m pip install -e .

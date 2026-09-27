@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### 变更 / Changed
+- **Studio 默认监听 `0.0.0.0:8765`**（原 `127.0.0.1`）— `_cmd_studio` 默认值、`run_studio_server` 默认值、
+  `systemd/hermes-fry-cards-studio.service` 的 `ExecStart` 三处同步；本机仍打印/打开 `http://127.0.0.1:8765`
+  （新增 `_display_host` 把通配地址回落 loopback，避免浏览器拿到 `http://0.0.0.0:8765`），
+  局域网用 `http://<本机IP>:8765` 访问。
+- 安全面不变：Host 门白名单 `_HOSTS_OK` 照旧对非白名单来源返回 403；README / README.en 补「Studio 可写
+  config.yaml 与飞书凭据，别做端口转发或公网暴露」警告与 `--host 127.0.0.1` 回退方式。
+
+### 新增 / Added
+- `TestWildcardBindDefaults`：守住三处默认绑 `0.0.0.0`（CLI / `run_studio_server` / systemd 模板）
+  与 `_display_host` 通配地址回落 loopback。
+
 ## [0.4.1] - 2026-09-23
 
 ### 新增 / Added

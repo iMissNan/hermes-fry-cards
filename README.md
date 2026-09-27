@@ -148,7 +148,7 @@ display:
 
 ```bash
 HERMES_PYTHON=~/.hermes/hermes-agent/venv/bin/python3
-$HERMES_PYTHON -m hermes_fry_cards studio                 # 默认监听 127.0.0.1:8765 并自动弹出浏览器
+$HERMES_PYTHON -m hermes_fry_cards studio                 # 默认监听 0.0.0.0:8765（本机 http://127.0.0.1:8765，局域网 http://<本机IP>:8765）并自动弹出浏览器
 $HERMES_PYTHON -m hermes_fry_cards studio --port 9000 --no-browser
 ```
 
@@ -161,8 +161,9 @@ systemctl --user daemon-reload
 systemctl --user enable --now hermes-fry-cards-studio.service
 ```
 
-- 开机/用户登录自启，进程异常中断 3 秒自动拉起。
-- 查看运行状态：`systemctl --user status hermes-fry-cards-studio.service`。
+- 开机/用户登录自启，进程异常中断 3 秒自动拉起；默认监听 `0.0.0.0:8765`（本机 `http://127.0.0.1:8765`，局域网其他设备用 `http://<本机IP>:8765`），不会自动打开浏览器。
+- 查看运行状态：`systemctl --user status hermes-fry-cards-studio.service`；日志：`journalctl --user -u hermes-fry-cards-studio.service -f`。
+- 🔒 **安全面**：Host 门白名单 `_HOSTS_OK` 对非白名单来源一律返回 403（防 DNS rebinding），无 CORS 头、body ≤1MB。⚠️ Studio 可写 `config.yaml` 与飞书凭据——**别做端口转发/公网暴露**，只在可信局域网内用；只想本机访问就改回 `--host 127.0.0.1`（或把单元里的 `--host` 改回去）。
 
 ---
 
@@ -191,7 +192,7 @@ $HERMES_PYTHON -m hermes_fry_cards status     # 检查 hook 挂载与飞书连�
 $HERMES_PYTHON -m hermes_fry_cards verify     # 校验网关文件兼容性
 $HERMES_PYTHON -m hermes_fry_cards install    # 注入 AST hook
 $HERMES_PYTHON -m hermes_fry_cards uninstall  # 安全还原网关原文件
-$HERMES_PYTHON -m hermes_fry_cards studio     # 调起可视化工作坊
+$HERMES_PYTHON -m hermes_fry_cards studio     # 调起可视化工作坊（默认 0.0.0.0:8765，本机 127.0.0.1:8765）
 ```
 
 ---

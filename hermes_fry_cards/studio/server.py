@@ -942,12 +942,21 @@ def _host_ok(handler: BaseHTTPRequestHandler) -> bool:
     return host == "[::1]"
 
 
-def run_studio_server(host: str = "127.0.0.1", port: int = 8765, *, open_browser: bool = True) -> int:
+def _display_host(host: str) -> str:
+    """0.0.0.0 / :: 是通配地址，不能拿来开浏览器或拼可点 URL — 统一回落 127.0.0.1."""
+    return "127.0.0.1" if host in ("0.0.0.0", "::") else host
+
+
+def run_studio_server(host: str = "0.0.0.0", port: int = 8765, *, open_browser: bool = True) -> int:
     httpd = ThreadingHTTPServer((host, port), StudioHandler)
     httpd.daemon_threads = True
     real_port = httpd.server_address[1]
-    url = f"http://{host}:{real_port}/"
+    # 0.0.0.0 / :: 是通配地址，不能拿来开浏览器：本机一律用 127.0.0.1 拼 URL
+    local_host = _display_host(host)
+    url = f"http://{local_host}:{real_port}/"
     print(f"🍟 fry-cards Studio — {url}")
+    if local_host != host:
+        print(f"  LAN  : http://<本机IP>:{real_port}/  （Host 门白名单见 _HOSTS_OK）")
     print("  Ctrl+C 停止")
     if open_browser:
         timer = threading.Timer(0.3, lambda: webbrowser.open(url))

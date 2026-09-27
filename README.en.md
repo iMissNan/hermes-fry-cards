@@ -134,7 +134,7 @@ $HERMES_PYTHON -m hermes_fry_cards verify     # Verify compatibility
 $HERMES_PYTHON -m hermes_fry_cards install    # Inject hooks
 $HERMES_PYTHON -m hermes_fry_cards uninstall  # Remove hooks
 $HERMES_PYTHON -m hermes_fry_cards status     # Show status
-$HERMES_PYTHON -m hermes_fry_cards studio     # Visual config studio (127.0.0.1:8765)
+$HERMES_PYTHON -m hermes_fry_cards studio     # Visual config studio (0.0.0.0:8765, local http://127.0.0.1:8765)
 ```
 
 ### 🔁 Studio autostart and keepalive (systemd)
@@ -148,7 +148,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now hermes-fry-cards-studio.service
 ```
 
-The service starts on login/boot, restarts after an unexpected exit with a 3-second delay, listens on `127.0.0.1:8765`, and does not open a browser. Inspect status and logs with:
+The service starts on login/boot, restarts after an unexpected exit with a 3-second delay, listens on `0.0.0.0:8765` (local `http://127.0.0.1:8765`; other LAN devices use `http://<host-ip>:8765`), and does not open a browser. Requests whose `Host` header is not in the allowlist (`_HOSTS_OK`) are rejected with 403 — keep the port off the public internet, since Studio can write `config.yaml` and Feishu credentials. Inspect status and logs with:
 
 ```bash
 systemctl --user status hermes-fry-cards-studio.service

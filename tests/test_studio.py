@@ -602,3 +602,31 @@ class TestVersionInStatus:
         assert state["status"]["hermes_version"] is None or isinstance(
             state["status"]["hermes_version"], str
         )
+
+
+class TestWildcardBindDefaults:
+    """默认绑 0.0.0.0（局域网可达）是产品决策 — 三处落点都要守住，别被改回 loopback."""
+
+    def test_run_studio_server_defaults_to_wildcard(self) -> None:
+        import inspect
+
+        assert inspect.signature(srv.run_studio_server).parameters["host"].default == "0.0.0.0"
+
+    def test_cli_studio_defaults_to_wildcard(self) -> None:
+        import inspect
+
+        from hermes_fry_cards.__main__ import _cmd_studio
+
+        assert 'host = "0.0.0.0"' in inspect.getsource(_cmd_studio)
+
+    def test_systemd_template_binds_wildcard(self) -> None:
+        template = (
+            Path(__file__).resolve().parents[1] / "systemd" / "hermes-fry-cards-studio.service"
+        )
+        assert "--host 0.0.0.0" in template.read_text(encoding="utf-8")
+
+    def test_wildcard_url_falls_back_to_loopback(self) -> None:
+        # 浏览器/打印不能用 0.0.0.0
+        assert srv._display_host("0.0.0.0") == "127.0.0.1"
+        assert srv._display_host("::") == "127.0.0.1"
+        assert srv._display_host("192.168.31.5") == "192.168.31.5"

@@ -34,8 +34,8 @@ def main() -> int:
 
 
 def _cmd_studio(argv: list[str]) -> int:
-    """启动可视化配置工作坊（stdlib HTTP，默认 127.0.0.1:8765）."""
-    host = "127.0.0.1"
+    """启动可视化配置工作坊（stdlib HTTP，默认 0.0.0.0:8765，本机 http://127.0.0.1:8765）."""
+    host = "0.0.0.0"
     port = 8765
     open_browser = True
     i = 0
@@ -90,7 +90,7 @@ def _print_usage() -> None:
     print("  restore    Restore from backup")
     print("  status     Show current patch status")
     print("  verify     Verify compatibility without patching")
-    print("  studio     Launch visual config studio (http://127.0.0.1:8765)")
+    print("  studio     Launch visual config studio (http://127.0.0.1:8765, binds 0.0.0.0)")
 
 
 def _get_patcher() -> Patcher | None:
