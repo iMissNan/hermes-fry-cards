@@ -2,8 +2,9 @@
 
 :root {
   color-scheme: light;
-  --ink: #1b1c1f;            /* 主操作色（黑） */
-  --ink-hover: #33353a;
+  --ink: #39404a;            /* 主操作色：石墨蓝灰（柔化纯黑） */
+  --ink-hover: #4a5260;
+  --ink-soft: rgba(57, 64, 74, .28);  /* 激活元素轻阴影 */
   --text: #1f2329;
   --text-2: #6b7076;
   --grey: #989da3;
@@ -21,8 +22,9 @@
 }
 [data-theme="dark"] {
   color-scheme: dark;
-  --ink: #f2f3f4;            /* 暗色下主按钮反白 */
+  --ink: #e7e8ea;            /* 暗色下主操作反白（柔白，非纯白） */
   --ink-hover: #ffffff;
+  --ink-soft: rgba(0, 0, 0, .35);
   --text: #e8e9ea;
   --text-2: #a4a7ab;
   --grey: #7d8085;
@@ -78,7 +80,7 @@ body {
   color: var(--text-2); transition: background .15s, color .15s;
 }
 .tab:hover { color: var(--text); background: var(--bg-soft); }
-.tab.active { background: var(--ink); color: var(--bg); }
+.tab.active { background: var(--ink); color: var(--bg); box-shadow: 0 1px 3px var(--ink-soft); }
 
 main { max-width: 960px; margin: 14px auto 60px; padding: 0 24px; }
 .panel { display: none; }
@@ -129,7 +131,7 @@ legend { font-weight: 700; padding: 0 0 6px; font-size: 14px; color: var(--text)
   transition: border-color .12s, background .12s, color .12s;
 }
 .chip:hover { border-color: var(--border-strong); color: var(--text); }
-.chip.on { background: var(--ink); border-color: var(--ink); color: var(--bg); }
+.chip.on { background: var(--ink); border-color: var(--ink); color: var(--bg); box-shadow: 0 1px 3px var(--ink-soft); }
 
 .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 .btn {
@@ -138,7 +140,7 @@ legend { font-weight: 700; padding: 0 0 6px; font-size: 14px; color: var(--text)
   transition: border-color .12s, transform .12s;
 }
 .btn:hover { border-color: var(--border-strong); transform: translateY(-1px); }
-.btn.primary { background: var(--ink); border-color: var(--ink); color: var(--bg); font-weight: 700; }
+.btn.primary { background: var(--ink); border-color: var(--ink); color: var(--bg); font-weight: 700; box-shadow: 0 1px 3px var(--ink-soft); }
 .btn.primary:hover { background: var(--ink-hover); }
 .btn.danger { background: var(--red); border-color: var(--red); color: #fff; }
 .btn.danger:hover { filter: brightness(.95); }

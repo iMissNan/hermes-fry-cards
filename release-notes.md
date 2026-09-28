@@ -1,3 +1,11 @@
+## 🍟 hermes-fry-cards v0.4.5（主色柔化）
+
+- 操作色纯黑 → **石墨蓝灰 `#39404a`**（暗色反白柔化为 `#e7e8ea`），激活 tab / 选中 chip /
+  主按钮加同色系轻阴影，去掉高对比的生硬感
+- 纯 CSS 变量调整，配置键与功能不变；浏览器强刷即见
+
+---
+
 ## 🍟 hermes-fry-cards v0.4.4（Studio 视觉对齐 CreditDaddy · 亮暗双主题）
 
 > Studio 前端整体换装：黑白主色 + 胶囊导航 + 卡片化布局，与 CreditDaddy 同一设计语言；

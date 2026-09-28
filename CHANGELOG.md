@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.5] - 2026-09-29
+
+### 变更 / Changed
+- **主色柔化**：黑白主题的操作色由纯黑 `#1b1c1f` 调整为石墨蓝灰 `#39404a`（暗色下反白
+  同步柔化为 `#e7e8ea`），激活 tab / 选中 chip / 主按钮增加同色系轻阴影，缓解高对比
+  生硬感；checkbox、toast、按钮 hover 全部随变量自动过渡。纯 CSS 变量调整，无功能变化。
+
+---
+
 ## [0.4.4] - 2026-09-28
 
 ### 变更 / Changed
