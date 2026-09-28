@@ -14,7 +14,18 @@
 
 - `_cmd_studio` / `run_studio_server` / systemd 模板 `ExecStart` 三处默认 host 统一为 `0.0.0.0`
 - 本机打印与自动打开的 URL 回落 `127.0.0.1`（新增 `_display_host`），另打印一行 LAN 地址提示
-- 安全面不变：Host 门白名单 `_HOSTS_OK` 对非白名单来源一律 403（防 DNS rebinding）
+- Host 门白名单可配置：`studio.allowed_hosts` 附加网段/主机（默认仅 loopback），非白名单 403（防 DNS rebinding）
+
+**🛠️ 修复**（[#13](https://github.com/techysy/hermes-fry-cards/issues/13) / [#14](https://github.com/techysy/hermes-fry-cards/issues/14) / [#15](https://github.com/techysy/hermes-fry-cards/issues/15)）
+
+- 完成态卡片丢失最终答案：多工具回合的旁白 ANSWER 段不再吞掉完成态注入，答案按交错时间线追加
+- cron 投递 230001 invalid receive_id：兼容 0.21.0 起的 dict 形 delivery，跨调度布局解析投递身份
+- clarify toast SDK 惰性加载：adapter 导入不再触碰 lark_oapi，10s 插件预算不再被拖爆
+
+**🔔 完成通知**（[#16](https://github.com/techysy/hermes-fry-cards/issues/16)）
+
+- `streaming.completion_notice` / `completion_notice_text`（默认关）：卡片收尾后回复一条「回答结束 · 耗时」短通知
+- Studio 正文大字号选项（`heading` 档）
 - ⚠️ Studio 可写 `config.yaml` 与飞书凭据——别做端口转发/公网暴露；只想本机用就 `--host 127.0.0.1`
 - 新增 `TestWildcardBindDefaults` 守住三处默认值
 

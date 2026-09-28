@@ -592,3 +592,23 @@ class TestGroupSecurityBoundaryProperty:
         )
         gsb = Config(home=tmp_path).group_security_boundary
         assert gsb == {"enabled": True, "allow_chats": []}
+
+
+class TestStudioAllowedHosts:
+    def test_default_empty(self, tmp_path: Path) -> None:
+        assert Config(home=tmp_path).studio_allowed_hosts == []
+
+    def test_reads_and_cleans(self, tmp_path: Path) -> None:
+        conf = tmp_path / "config.yaml"
+        conf.write_text(
+            "studio:\n"
+            "  allowed_hosts: ['192.168.31.', ' 10.0.0.5 ', 123, '', '192.168.31.']\n",
+            encoding="utf-8",
+        )
+        assert Config(home=tmp_path).studio_allowed_hosts == ["192.168.31.", "10.0.0.5"]
+
+    def test_missing_or_wrong_type_falls_back(self, tmp_path: Path) -> None:
+        (tmp_path / "config.yaml").write_text("studio: broken\n", encoding="utf-8")
+        assert Config(home=tmp_path).studio_allowed_hosts == []
+        (tmp_path / "config.yaml").write_text("studio:\n  allowed_hosts: oops\n", encoding="utf-8")
+        assert Config(home=tmp_path).studio_allowed_hosts == []

@@ -44,7 +44,20 @@ _WEB_ROOT = (Path(__file__).parent / "web").resolve()
 _MAX_BODY_BYTES = 1_000_000
 _MAX_DRAIN_BYTES = 4_000_000  # 413 时有界排空上限（防未读数据触发客户端写端 RST）
 _BACKUP_KEEP = 20
-_HOSTS_OK = ("127.0.0.1", "localhost", "::1", "192.168.31.")
+_BASE_HOSTS_OK = ("127.0.0.1", "localhost", "::1")
+_ALLOWED_HOSTS_CACHE: list[str] | None = None  # loopback + studio.allowed_hosts（启动后缓存，重启生效）
+
+
+def _allowed_hosts() -> list[str]:
+    """Host 门白名单：内置 loopback + ``studio.allowed_hosts`` 配置附加（网段前缀或完整主机）."""
+    global _ALLOWED_HOSTS_CACHE
+    if _ALLOWED_HOSTS_CACHE is None:
+        try:
+            extra = Config().studio_allowed_hosts
+        except Exception:
+            extra = []
+        _ALLOWED_HOSTS_CACHE = list(_BASE_HOSTS_OK) + [h for h in extra if h not in _BASE_HOSTS_OK]
+    return _ALLOWED_HOSTS_CACHE
 
 _FOOTER_FIELDS = ("status", "elapsed", "model", "tokens", "context")
 _WIDTH_MODES = ("default", "compact", "fill")
@@ -944,15 +957,16 @@ def _host_ok(handler: BaseHTTPRequestHandler) -> bool:
     host = (handler.headers.get("Host") or "").strip().lower()
     if not host:
         return False
-    for base in _HOSTS_OK:
-        if host == base or host.startswith(base + ":"):
+    for base in _allowed_hosts():
+        base_l = base.lower()
+        if host == base_l or host.startswith(base_l + ":"):
             return True
-        if base != "::1" and host == f"[{base}]":
+        if base_l != "::1" and host == f"[{base_l}]":
             return True
-        if host.startswith(f"[{base}]:"):
+        if host.startswith(f"[{base_l}]:"):
             return True
         # prefix entries (e.g. "192.168.31.") match any host starting with them
-        if base.endswith(".") and host.startswith(base):
+        if base_l.endswith(".") and host.startswith(base_l):
             return True
     return host == "[::1]"
 
@@ -971,7 +985,7 @@ def run_studio_server(host: str = "0.0.0.0", port: int = 8765, *, open_browser: 
     url = f"http://{local_host}:{real_port}/"
     print(f"🍟 fry-cards Studio — {url}")
     if local_host != host:
-        print(f"  LAN  : http://<本机IP>:{real_port}/  （Host 门白名单见 _HOSTS_OK）")
+        print(f"  LAN  : http://<本机IP>:{real_port}/  （非 loopback 来源需在 config.yaml 配 studio.allowed_hosts）")
     print("  Ctrl+C 停止")
     if open_browser:
         timer = threading.Timer(0.3, lambda: webbrowser.open(url))

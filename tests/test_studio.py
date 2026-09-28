@@ -683,3 +683,30 @@ class TestWildcardBindDefaults:
         assert srv._display_host("0.0.0.0") == "127.0.0.1"
         assert srv._display_host("::") == "127.0.0.1"
         assert srv._display_host("192.168.31.5") == "192.168.31.5"
+
+
+class TestAllowedHostsGate:
+    """Host 门白名单配置化（studio.allowed_hosts）— 默认仅 loopback，配置后放行网段."""
+
+    def test_lan_host_blocked_by_default(self, server: str) -> None:
+        host, port = server.removeprefix("http://").split(":")
+        conn = http.client.HTTPConnection(host, int(port), timeout=10)
+        conn.putrequest("GET", "/api/state", skip_host=True)
+        conn.putheader("Host", f"192.168.31.77:{port}")
+        conn.endheaders()
+        resp = conn.getresponse()
+        assert resp.status == 403
+        resp.read()
+        conn.close()
+
+    def test_lan_host_allowed_via_config(self, server: str, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(srv, "_ALLOWED_HOSTS_CACHE", ["127.0.0.1", "localhost", "::1", "192.168.31."])
+        host, port = server.removeprefix("http://").split(":")
+        conn = http.client.HTTPConnection(host, int(port), timeout=10)
+        conn.putrequest("GET", "/api/state", skip_host=True)
+        conn.putheader("Host", f"192.168.31.77:{port}")
+        conn.endheaders()
+        resp = conn.getresponse()
+        assert resp.status == 200
+        resp.read()
+        conn.close()

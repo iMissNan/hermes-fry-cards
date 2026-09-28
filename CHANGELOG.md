@@ -14,8 +14,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `systemd/hermes-fry-cards-studio.service` 的 `ExecStart` 三处同步；本机仍打印/打开 `http://127.0.0.1:8765`
   （新增 `_display_host` 把通配地址回落 loopback，避免浏览器拿到 `http://0.0.0.0:8765`），
   局域网用 `http://<本机IP>:8765` 访问。
-- 安全面不变：Host 门白名单 `_HOSTS_OK` 照旧对非白名单来源返回 403；README / README.en 补「Studio 可写
+- Host 门白名单**可配置**：新增 `studio.allowed_hosts`（附加网段前缀或完整主机，默认仅 loopback），
+  取代硬编码网段；非白名单来源照旧 403；README / README.en 补「Studio 可写
   config.yaml 与飞书凭据，别做端口转发或公网暴露」警告与 `--host 127.0.0.1` 回退方式。
+
+### 修复 / Fixed
+- **完成态卡片丢失最终答案**（[#13](https://github.com/techysy/hermes-fry-cards/issues/13)）—
+  多工具回合中工具间旁白形成 ANSWER 段后，完成态注入被旧 guard 整体跳过；现改为完成态答案
+  追加为新 ANSWER 段（保住交错时间线），`endswith` 去重 + 完成重试防重放。
+- **cron 投递 230001 invalid receive_id**（[#14](https://github.com/techysy/hermes-fry-cards/issues/14)）—
+  Hermes 0.21.0 起部分调度布局的 delivery 是 dict，旧钩子仅走 `getattr` 取不到 `chat_id`；
+  现 dict/attr 双路径 + `delivery → locals → target` 三级优先，跨调度布局解析投递身份。
+- **clarify toast 导入拖爆 adapter 10s 加载预算**（[#15](https://github.com/techysy/hermes-fry-cards/issues/15)）—
+  `apply_patch` 在 adapter 导入期执行，toast 类的 SDK 导入等效顶层导入（冷进程 9–16s）；
+  改为首次回调需要时惰性加载（哨兵缓存，旧 SDK 缺失静默降级），adapter 导入不再触碰 SDK。
+- **Studio 正文大字号**（[#16](https://github.com/techysy/hermes-fry-cards/issues/16) 部分）—
+  字号白名单补 `heading` 档并在 Studio 暴露。
+
+### 新增 / Added（补录）
+- **完成通知**（[#16](https://github.com/techysy/hermes-fry-cards/issues/16) 部分）—
+  `streaming.completion_notice` / `completion_notice_text`（默认关）：卡片收尾后以回复形式
+  发送「回答结束 · 耗时」短通知（CardKit 更新不触发飞书提醒的兜底）。
 
 ### 新增 / Added
 - **Studio systemd 用户服务模板** — 新增 `systemd/hermes-fry-cards-studio.service`，支持登录/系统启动后自动启动、异常退出自动重启和 `journalctl` 日志；默认监听 `0.0.0.0:8765`（本机 `127.0.0.1:8765`），不会自动打开浏览器。

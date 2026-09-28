@@ -124,6 +124,29 @@ class Config:
         return bool(sec.get("enabled", True))
 
     @property
+    def studio_allowed_hosts(self) -> list[str]:
+        """Studio Host 门白名单附加项（``studio.allowed_hosts``）.
+
+        除内置 loopback（``127.0.0.1`` / ``localhost`` / ``::1``）外额外放行的 Host
+        或网段前缀（如 ``"192.168.31."`` 放行整个 C 段）。仅接受非空字符串，去重保序，
+        默认 ``[]``（仅 loopback 可访问）。由 Studio 进程启动时读取（缓存至重启）。
+        """
+        raw = self._reload().get("studio")
+        if not isinstance(raw, dict):
+            return []
+        hosts = raw.get("allowed_hosts")
+        if not isinstance(hosts, list):
+            return []
+        out: list[str] = []
+        for item in hosts:
+            if not isinstance(item, str):
+                continue
+            item = item.strip()
+            if item and item not in out:
+                out.append(item)
+        return out
+
+    @property
     def chat_types(self) -> set[str] | None:
         """允许发流式卡片的聊天类型集合（source.chat_type 的取值，如 ``dm`` / ``group``）。
 
