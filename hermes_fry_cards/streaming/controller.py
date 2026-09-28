@@ -38,7 +38,7 @@ from .segment_helper import (
 )
 from .segments import Segment, SegmentState, SegmentType
 from .session import SessionState
-from .text import split_reasoning_text
+from .text import split_reasoning_text, strip_reasoning_tags
 from .tooluse import ToolUseTracker
 
 if TYPE_CHECKING:
@@ -48,6 +48,16 @@ if TYPE_CHECKING:
     from .tooluse import ToolDisplayStep
 
 _logger = logging.getLogger("hermes_fry_cards")
+
+
+def _clean_delivered_text(content: str) -> str:
+    """cron / background 静态卡片投递前的 reasoning 清理.
+
+    与完成态卡片同一类模型输出，可能带 <think> 标签；剥空时保底用原文，
+    空卡片比展示推理更糟。
+    """
+    stripped = strip_reasoning_tags(content)
+    return stripped if stripped.strip() else content
 
 
 async def _resolve_answer_images(
@@ -1035,7 +1045,7 @@ class StreamingController:
     ) -> None:
         await self._ensure_init()
         assert self._client is not None
-        card = build_cron_card(content, task_name=task_name, run_time=run_time)
+        card = build_cron_card(_clean_delivered_text(content), task_name=task_name, run_time=run_time)
         await self._client.send_card_to_chat(chat_id, card)
 
     async def _do_background_deliver(
@@ -1048,7 +1058,7 @@ class StreamingController:
     ) -> None:
         await self._ensure_init()
         assert self._client is not None
-        card = build_background_card(preview, content)
+        card = build_background_card(preview, _clean_delivered_text(content))
         await self._client.send_card_to_chat(
             chat_id,
             card,

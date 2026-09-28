@@ -2283,6 +2283,58 @@ class TestCronDeliver:
         finally:
             loop.call_soon_threadsafe(loop.stop)
 
+    def test_strips_reasoning_tags_from_content(self) -> None:
+        import threading
+
+        ctrl = StreamCardController()
+        ctrl._cfg = MagicMock()
+        ctrl._cfg.enabled = True
+
+        mock_client = AsyncMock()
+        mock_client.send_card_to_chat.return_value = "msg_123"
+        ctrl._client = mock_client
+        ctrl._initialized = True
+
+        loop = asyncio.new_event_loop()
+        threading.Thread(target=loop.run_forever, daemon=True).start()
+        try:
+            result = ctrl.on_cron_deliver(
+                chat_id="c1", content="<think>rea</think>hello", loop=loop,
+            )
+            assert result is True
+            args = mock_client.send_card_to_chat.call_args[0]
+            body = args[1]["body"]["elements"][0]["content"]
+            assert "think" not in body
+            assert "hello" in body
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+
+    def test_all_reasoning_content_falls_back_to_raw(self) -> None:
+        import threading
+
+        ctrl = StreamCardController()
+        ctrl._cfg = MagicMock()
+        ctrl._cfg.enabled = True
+
+        mock_client = AsyncMock()
+        mock_client.send_card_to_chat.return_value = "msg_123"
+        ctrl._client = mock_client
+        ctrl._initialized = True
+
+        loop = asyncio.new_event_loop()
+        threading.Thread(target=loop.run_forever, daemon=True).start()
+        try:
+            # 全部内容都是 reasoning → 剥空后保底用原文，空卡片比展示推理更糟
+            result = ctrl.on_cron_deliver(
+                chat_id="c1", content="<think>pure reasoning</think>", loop=loop,
+            )
+            assert result is True
+            args = mock_client.send_card_to_chat.call_args[0]
+            body = args[1]["body"]["elements"][0]["content"]
+            assert "pure reasoning" in body
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+
     def test_sends_card_without_gateway_loop(self) -> None:
         ctrl = StreamCardController()
         ctrl._cfg = MagicMock()
@@ -2416,6 +2468,29 @@ class TestBackgroundDeliver:
         card = args[1]
         body = card["body"]["elements"][0]["content"]
         assert "Here\n\nDone" in body
+
+    @pytest.mark.asyncio
+    async def test_strips_reasoning_tags_from_content(self) -> None:
+        ctrl = StreamCardController()
+        ctrl._cfg = MagicMock()
+        ctrl._cfg.enabled = True
+
+        mock_client = AsyncMock()
+        mock_client.send_card_to_chat.return_value = "msg_123"
+        ctrl._client = mock_client
+        ctrl._initialized = True
+
+        result = await ctrl.on_background_deliver(
+            chat_id="c1",
+            preview="prompt",
+            content="<think>rea</think>Here\n\nDone",
+        )
+
+        assert result is True
+        args, _ = mock_client.send_card_to_chat.call_args
+        body = args[1]["body"]["elements"][0]["content"]
+        assert "think" not in body
+        assert "Here" in body
 
     @pytest.mark.asyncio
     async def test_returns_false_on_empty_cleaned_text(self) -> None:

@@ -118,3 +118,23 @@ class TestStripReasoningTags:
     def test_hermes_reasoning_prepend_only(self) -> None:
         text = "💭 **Reasoning:**\n```\nonly reasoning\n```\n\n"
         assert strip_reasoning_tags(text).strip() == ""
+
+    def test_hermes_prepend_with_inner_code_fence(self) -> None:
+        # 推理内容含带语言标签的内层围栏：非贪婪正则会在内层 ``` 提前截断，
+        # 必须按围栏深度扫描剥到模板自己的闭合围栏
+        text = (
+            "💭 **Reasoning:**\n```\n先看结构如下\n```python\nx = 1\n```\n然后实现\n```\n\n"
+            "最终答案在这里"
+        )
+        assert strip_reasoning_tags(text) == "最终答案在这里"
+
+    def test_hermes_prepend_with_inner_bare_fence(self) -> None:
+        # 内层无语言标签的裸围栏（开后未关）：裸围栏先在内层处 depth 归零，
+        # 但其后不是空行 → 继续扫描到模板闭合围栏
+        text = "💭 **Reasoning:**\n```\n看:\n```\nx\n继续\n```\n\n答案"
+        assert strip_reasoning_tags(text) == "答案"
+
+    def test_hermes_prepend_unbalanced_fence_falls_back(self) -> None:
+        # 推理被截断导致围栏不配对：保底不剥，宁可重复也不吞掉答案正文
+        text = "💭 **Reasoning:**\n```\na\n```python\nb\n```\n\n答案"
+        assert strip_reasoning_tags(text) == text
