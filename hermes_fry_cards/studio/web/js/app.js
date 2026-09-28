@@ -7,6 +7,21 @@
   var $ = function (sel) { return document.querySelector(sel); };
   var esc = window.FryPreview.escapeHtml;
 
+  /* ---------- 主题（亮 / 暗，localStorage 记忆） ---------- */
+  var themeBtn = document.getElementById("theme-toggle");
+  function applyTheme(t) {
+    document.documentElement.setAttribute("data-theme", t);
+    themeBtn.textContent = t === "dark" ? "☀️" : "🌙";
+    try { localStorage.setItem("fry-theme", t); } catch (e) { /* 隐私模式忽略 */ }
+  }
+  var savedTheme = "light";
+  try { savedTheme = localStorage.getItem("fry-theme") || "light"; } catch (e) { /* ignore */ }
+  applyTheme(savedTheme);
+  themeBtn.addEventListener("click", function () {
+    var cur = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+    applyTheme(cur === "dark" ? "light" : "dark");
+  });
+
   /* ---------- tabs ---------- */
   document.getElementById("tabs").addEventListener("click", function (e) {
     var b = e.target.closest(".tab");

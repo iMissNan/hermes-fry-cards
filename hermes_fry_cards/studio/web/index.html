@@ -5,17 +5,28 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>🍟 fry-cards Studio</title>
 <link rel="stylesheet" href="/css/style.css">
+<script>try { document.documentElement.setAttribute("data-theme", localStorage.getItem("fry-theme") || "light"); } catch (e) { }</script>
 </head>
 <body>
 <header class="topbar">
-  <div class="brand">🍟 hermes-fry-cards <span class="brand-sub">Studio</span> <span class="brand-ver" id="brand-version"></span></div>
-  <nav class="tabs" id="tabs">
-    <button class="tab active" data-tab="config">配置</button>
-    <button class="tab" data-tab="preview">预览</button>
-    <button class="tab" data-tab="status">状态</button>
-  </nav>
-  <div class="topbar-right"><a href="https://github.com/techysy/hermes-fry-cards" target="_blank" rel="noreferrer">GitHub ↗</a></div>
+  <div class="brand">
+    <span class="brand-logo">🍟</span>
+    <div class="brand-text">
+      <div class="brand-title">fry-cards <span class="brand-sub">Studio</span></div>
+      <div class="brand-meta"><span id="brand-version"></span><span class="brand-dot">·</span>配置 <code>~/.hermes/config.yaml</code></div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <a class="icon-link" href="https://github.com/techysy/hermes-fry-cards" target="_blank" rel="noreferrer" title="GitHub">⭐</a>
+    <button type="button" id="theme-toggle" class="icon-btn" title="切换亮 / 暗主题">🌙</button>
+  </div>
 </header>
+
+<nav class="tabs" id="tabs">
+  <button class="tab active" data-tab="config">配置</button>
+  <button class="tab" data-tab="preview">预览</button>
+  <button class="tab" data-tab="status">状态</button>
+</nav>
 
 <main>
   <!-- ================= 配置 ================= -->
