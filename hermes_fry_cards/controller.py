@@ -812,11 +812,15 @@ class StreamCardController(StreamingController):
             import time as _t
             _duration = _t.time() - session.created_at
         prev_model = session.footer.get("model") or ""
+        _cache_read = (tokens or {}).get("cache_read_tokens") or 0
+        _tps = (tokens or {}).get("tokens_per_sec") or 0
         session.footer = {
             "duration": _duration,
             "model": model or prev_model,
             **({"input_tokens": tokens.get("input_tokens")} if tokens else {}),
             **({"output_tokens": tokens.get("output_tokens")} if tokens else {}),
+            **({"cache_read_tokens": _cache_read} if _cache_read else {}),
+            **({"tokens_per_sec": _tps} if _tps else {}),
             **({"context_used": context.get("used_tokens")} if context else {}),
             **({"context_max": context.get("max_tokens")} if context else {}),
         }

@@ -72,7 +72,7 @@ hermes gateway restart
 ```
 
 > 💡 可通过环境变量指定特定版本或解释器：  
-> `curl -fsSL .../install.sh | FRY_REF=v0.4.1 bash`  
+> `curl -fsSL .../install.sh | FRY_REF=v0.4.2 bash`  
 > `curl -fsSL .../install.sh | HERMES_PYTHON=/path/to/python3 bash`
 
 ### 方式二：从源码手动安装
@@ -106,7 +106,7 @@ streaming:
   footer:
     enabled: false
     fields:
-      - [status, elapsed, model, context]
+      - [status, elapsed, speed, cache, context, model]   # 可选字段：status/elapsed/speed/cache/tokens/context/model，无数据字段自动隐藏
 display:
   platforms:
     feishu:
@@ -114,6 +114,9 @@ display:
       show_reasoning: true            # 启用思考过程展示
       show_context: true              # 统一面板中显示上下文水位
       context_display_mode: text      # 上下文格式：text / bar / text_bar
+      panel_fields: [model, reasoning, tools, context, elapsed]   # 统一面板 header 字段自由组合
+                                      # 可选：model/reasoning/tools/context/elapsed（面板语义）
+                                      #       + status/speed/cache/tokens（与 footer 共享），无数据自动隐藏
       max_reasoning_panels: 3         # 独立推理面板上限（超出自动合并防溢出）
       unified_panel_min_duration: 5   # 统一面板最小展示耗时（秒）
       truncate_model_name: true       # 模型超长名称自动截断（如 nvidia/kimi-k3 -> ⇲kimi-k3）

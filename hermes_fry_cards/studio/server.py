@@ -59,7 +59,8 @@ def _allowed_hosts() -> list[str]:
         _ALLOWED_HOSTS_CACHE = list(_BASE_HOSTS_OK) + [h for h in extra if h not in _BASE_HOSTS_OK]
     return _ALLOWED_HOSTS_CACHE
 
-_FOOTER_FIELDS = ("status", "elapsed", "model", "tokens", "context")
+_FOOTER_FIELDS = ("status", "elapsed", "speed", "cache", "model", "tokens", "context")
+_PANEL_FIELDS = ("model", "reasoning", "tools", "context", "elapsed", "speed", "cache", "tokens", "status")
 _WIDTH_MODES = ("default", "compact", "fill")
 _CONTEXT_MODES = ("text", "bar", "text_bar", "block", "block_text")
 _LANGS = ("zh", "en")
@@ -159,6 +160,22 @@ def _validate_fields(v: Any, name: str) -> list[list[str]]:
     return rows
 
 
+def _validate_panel_fields(v: Any, name: str) -> list[str]:
+    """统一面板 header 字段（有序一维列表，可空 = 回落默认布局）."""
+    if not isinstance(v, list):
+        raise ValueError(f"{name} 必须是数组")
+    if len(v) > len(_PANEL_FIELDS):
+        raise ValueError(f"{name} 最多 {len(_PANEL_FIELDS)} 个字段")
+    seen: set[str] = set()
+    for cell in v:
+        if not isinstance(cell, str) or cell not in _PANEL_FIELDS:
+            raise ValueError(f"{name} 字段必须是 {'/'.join(_PANEL_FIELDS)} 之一")
+        if cell in seen:
+            raise ValueError(f"{name} 字段不能重复")
+        seen.add(cell)
+    return list(v)
+
+
 def _validate_chat_types(v: Any, name: str) -> list[str] | None:
     if v is None:
         return None
@@ -215,6 +232,7 @@ _DISPLAY_KEYS: dict[str, str] = {
     "max_reasoning_panels": "panels",
     "unified_panel_min_duration": "dur600",
     "context_display_mode": "context",
+    "panel_fields": "panel_fields",
 }
 _GATEWAY_KEYS = {"enabled": "bool", "allow_chats": "chatlist"}
 
@@ -236,6 +254,8 @@ def _validate_scalar(v: Any, name: str, kind: str) -> Any:
         return _validate_chat_list(v, name)
     if kind == "fields":
         return _validate_fields(v, name)
+    if kind == "panel_fields":
+        return _validate_panel_fields(v, name)
     if kind == "textsize":
         return _expect_choice(v, name, _TEXT_SIZES)
     if kind == "dur":
@@ -728,6 +748,7 @@ def collect_state(home: Path | None = None) -> dict[str, Any]:
         "max_reasoning_panels": cfg.max_reasoning_panels,
         "unified_panel_min_duration": cfg.unified_panel_min_duration,
         "context_display_mode": cfg.context_display_mode,
+        "panel_fields": cfg.panel_fields,
     }
     gateway = {"group_security_boundary": cfg.group_security_boundary}
     return {
@@ -813,6 +834,8 @@ def _scenario_data(scenario: str) -> tuple[list[Segment], list[ToolDisplayStep],
         "model": "mimo/mimo-x-flash",
         "input_tokens": 15420,
         "output_tokens": 986,
+        "cache_read_tokens": 8300,  # 8300/15420 ≈ 54%，展示 speed/cache 字段效果
+        "tokens_per_sec": 208,
         "context_used": 41200,
         "context_max": 1000000,
     }
@@ -939,6 +962,7 @@ def build_preview(payload: Any, home: Path | None = None) -> dict[str, Any]:
             footer_show_label=bool(sv_footer.get("show_label", False)),
             footer_enabled=sv_footer.get("enabled", True),
             footer_text_size=sv_footer.get("text_size", "notation"),
+            panel_fields=dv.get("panel_fields"),
             panel_expanded=bool(sv.get("panel_expanded", False)),
             header_enabled=common["header_enabled"],
             body_text_size=common["body_text_size"],

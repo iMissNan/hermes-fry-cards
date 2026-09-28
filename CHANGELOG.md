@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.2] - 2026-09-28
+
+### 新增 / Added
+- **footer 新增 `speed`（tok/s）与 `cache`（缓存命中 %）字段** — 口径与 Hermes CLI 状态栏一致：
+  速度 = 滚动近 10 次 API 调用 `sum(output)/sum(latency)` 纯生成吞吐（剔除工具执行时间）；
+  命中率 = `cache_read / prompt_tokens`（prompt 已含缓存，同 `turn_usage.py` 归一化）。
+  数据取自 gateway 活跃 agent（`_running_agents` → `_agent_cache` tuple 解包）best-effort
+  采集（`patch.collect_stream_stats`），零读取/无 agent 时字段自动隐藏（无数据 ≠ 0%）。
+  默认 footer 布局变为 `[status, elapsed, speed, cache, context, model]`。
+- **统一面板 header 字段化，与 footer 共用字段池** — 新增 `display.platforms.feishu.panel_fields`
+  （有序一维列表，默认 `[model, reasoning, tools, context, elapsed]` 与历史布局逐字一致）；
+  面板专属字段 `reasoning`（💭 推理轮数）/ `tools`（🔧 工具步数）零计数自动隐藏，
+  共享字段（speed/cache/tokens/status 等）经 footer 渲染器回落；面板 header 标题补 i18n
+  （英文 `Cache hit {}%` / 中文 `缓存命中 {}%`）。
+- **Studio 字段自由组合** — footer 与统一面板各一组 chip 开关（参考 CreditDaddy 仪表盘
+  组件开关交互），勾选即组合、保存排序；预览（真实 builder）footer_data 带
+  `208 tok/s` / `缓存命中 54%` 样例；统一面板字段区含 9 个可选字段。
+- **上下文显示格式 `bar`/`block` 支持面板 header 复用** — 面板 context 渲染与 footer
+  共用 `_context_progress_bar` 等助手，`block`/`block_text` 废弃样式照旧回落。
+
+### 修复 / Fixed
+- **Studio footer 字段白名单缺 `speed`/`cache`** — GUI 勾选新字段保存会被 400 拒绝；
+  `_FOOTER_FIELDS` 校验白名单补齐（含测试回归）。
+
+### 升级注意
+- 注入模板变更（完成钩子/排队 follow-up 钩子新增 stats 采集），**已装环境须重跑
+  `uninstall` + `install`**；旧模板不传新键，controller 侧向后兼容（字段自动隐藏）。
+
+---
+
 ## [0.4.1] - 2026-09-28
 
 ### 变更 / Changed

@@ -65,10 +65,12 @@
             <label class="row"><span class="lbl">文字大小</span>
               <select id="f-footer-text-size"><option value="notation">notation（小）</option><option value="normal">normal</option></select>
             </label>
-            <div class="row col"><span class="lbl">字段（点击选择，单行）</span>
+            <div class="row col"><span class="lbl">footer 字段（点击选择，自由组合）</span>
               <div class="chips" id="f-footer-fields">
                 <button type="button" class="chip" data-field="status">状态</button>
                 <button type="button" class="chip" data-field="elapsed">耗时</button>
+                <button type="button" class="chip" data-field="speed">速度</button>
+                <button type="button" class="chip" data-field="cache">缓存命中</button>
                 <button type="button" class="chip" data-field="model">模型</button>
                 <button type="button" class="chip" data-field="tokens">Tokens</button>
                 <button type="button" class="chip" data-field="context">上下文</button>
@@ -86,7 +88,7 @@
         </fieldset>
 
         <fieldset>
-          <legend>统一面板（模型 · 推理 · 工具 · 上下文）</legend>
+          <legend>统一面板（header 字段自由组合）</legend>
           <label class="row"><span class="lbl">完成态面板保持展开</span><input type="checkbox" id="f-panel-expanded"></label>
           <label class="row"><span class="lbl">展示推理过程</span><input type="checkbox" id="f-show-reasoning"></label>
           <label class="row"><span class="lbl">展示工具调用面板</span><input type="checkbox" id="f-show-tool-use"></label>
@@ -105,6 +107,20 @@
             <input type="number" id="f-unified-min-duration" min="0" max="600" step="0.5">
           </label>
           <label class="row"><span class="lbl">面板 header 截断长模型名</span><input type="checkbox" id="f-truncate-model"></label>
+          <div class="row col"><span class="lbl">面板 header 字段（点击选择，自由组合）</span>
+            <div class="chips" id="f-panel-fields">
+              <button type="button" class="chip" data-field="model">🍟 模型</button>
+              <button type="button" class="chip" data-field="reasoning">💭 思考数</button>
+              <button type="button" class="chip" data-field="tools">🔧 工具数</button>
+              <button type="button" class="chip" data-field="context">上下文</button>
+              <button type="button" class="chip" data-field="elapsed">⏱️ 耗时</button>
+              <button type="button" class="chip" data-field="speed">⚡ 速度</button>
+              <button type="button" class="chip" data-field="cache">缓存命中</button>
+              <button type="button" class="chip" data-field="tokens">Tokens</button>
+              <button type="button" class="chip" data-field="status">状态</button>
+            </div>
+            <span class="hint">ℹ️ 思考数/工具数为面板专属计数；上下文跟随上方「显示上下文」开关与显示格式；无数据的字段自动隐藏。</span>
+          </div>
         </fieldset>
 
         <fieldset>

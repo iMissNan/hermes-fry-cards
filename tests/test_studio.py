@@ -109,6 +109,9 @@ class TestValidation:
             ({"display": {"max_reasoning_panels": True}}, "max_reasoning_panels"),
             ({"display": {"context_display_mode": "huge"}}, "context_display_mode"),
             ({"display": {"unified_panel_min_duration": 601}}, "unified_panel_min_duration"),
+            ({"display": {"panel_fields": "model"}}, "数组"),
+            ({"display": {"panel_fields": ["model", "bogus"]}}, "字段"),
+            ({"display": {"panel_fields": ["speed", "speed"]}}, "重复"),
         ],
     )
     def test_invalid_values_rejected(self, bad: dict, match: str) -> None:
@@ -129,6 +132,21 @@ class TestValidation:
         assert out["streaming"]["width_mode"] == "fill"
         assert out["streaming"]["chat_types"] == ["dm"]  # 去重
         assert out["display"]["max_reasoning_panels"] == 7
+
+    def test_footer_fields_accept_speed_cache(self) -> None:
+        out = srv.validate_payload(
+            {"streaming": {"footer": {"fields": [["status", "elapsed", "speed", "cache"]]}}}
+        )
+        assert out["streaming"]["footer"]["fields"] == [["status", "elapsed", "speed", "cache"]]
+
+    def test_panel_fields_validate_and_merge(self) -> None:
+        out = srv.validate_payload({"display": {"panel_fields": ["cache", "speed", "elapsed"]}})
+        assert out["display"]["panel_fields"] == ["cache", "speed", "elapsed"]
+        merged, _ = srv.merge_managed({}, out)
+        assert merged["display"]["platforms"]["feishu"]["panel_fields"] == ["cache", "speed", "elapsed"]
+        # 空列表合法（运行时回落默认布局）
+        out = srv.validate_payload({"display": {"panel_fields": []}})
+        assert out["display"]["panel_fields"] == []
 
     def test_partial_sections_allowed(self) -> None:
         out = srv.validate_payload({"display": {"show_reasoning": False}})

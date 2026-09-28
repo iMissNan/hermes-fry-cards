@@ -2,7 +2,8 @@
 (function () {
   "use strict";
 
-  var FIELD_ORDER = ["status", "elapsed", "model", "tokens", "context"];
+  var FIELD_ORDER = ["status", "elapsed", "speed", "tokens", "cache", "context", "model"];
+  var PANEL_FIELD_ORDER = ["model", "reasoning", "tools", "context", "elapsed", "speed", "cache", "tokens", "status"];
   var $ = function (sel) { return document.querySelector(sel); };
   var esc = window.FryPreview.escapeHtml;
 
@@ -113,6 +114,11 @@
     setVal("f-unified-min-duration", d.unified_panel_min_duration);
     setVal("f-context-mode", d.context_display_mode);
 
+    var pf = d.panel_fields || [];
+    document.querySelectorAll("#f-panel-fields .chip").forEach(function (c) {
+      c.classList.toggle("on", pf.indexOf(c.dataset.field) >= 0);
+    });
+
     var gsb = ((state.gateway || {}).group_security_boundary) || {};
     setCheck("f-gsb-enabled", gsb.enabled);
     document.getElementById("f-gsb-allow").value = (gsb.allow_chats || []).join("\n");
@@ -149,6 +155,12 @@
     if (__origFields && __origFields.length > 1) fields = __origFields; // 多行原样保留
     else fields = ordered.length ? [ordered] : [];
 
+    var pickedPanel = [];
+    document.querySelectorAll("#f-panel-fields .chip.on").forEach(function (c) {
+      pickedPanel.push(c.dataset.field);
+    });
+    var panelFields = PANEL_FIELD_ORDER.filter(function (f) { return pickedPanel.indexOf(f) >= 0; });
+
     return {
       streaming: {
         enabled: $("#f-enabled").checked,
@@ -179,6 +191,7 @@
         max_reasoning_panels: int("#f-max-panels"),
         unified_panel_min_duration: num("#f-unified-min-duration"),
         context_display_mode: $("#f-context-mode").value,
+        panel_fields: panelFields,
       },
       gateway: {
         group_security_boundary: {

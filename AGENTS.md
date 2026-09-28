@@ -96,7 +96,9 @@ Card templates (cardkit/)
   ├─ builder.py — builds Feishu card JSON
   │   ├─ _build_header — card-level header with status-based theming (blue/green/red)
   │   ├─ build_streaming_card_v2 — initial streaming CardKit v2 card (header_enabled, text_size)
-  │   ├─ build_complete_card — final card, renders segments in order (header_enabled, body_text_size, footer_enabled, footer_text_size)
+  │   ├─ build_complete_card — final card, renders segments in order (header_enabled, body_text_size, footer_enabled, footer_text_size, panel_fields)
+  │   │   └─ unified panel header + footer share one field pool (status/elapsed/speed/cache/tokens/context/model);
+  │   │      panel adds exclusive reasoning/tools counts; driven by streaming.footer.fields / display.platforms.feishu.panel_fields
   │   ├─ build_cron_card — static card for cron delivery
   │   └─ build_background_card — static card for background task delivery
   ├─ markdown.py — CardKit markdown normalization and table/image helpers

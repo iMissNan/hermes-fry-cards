@@ -86,15 +86,15 @@ class TestFooterFields:
     )
     def test_empty_footer_configuration_returns_default(self, raw: dict[str, Any]) -> None:
         cfg = _make_config(raw)
-        assert cfg.footer_fields == [["status", "elapsed", "model", "context"]]
+        assert cfg.footer_fields == [["status", "elapsed", "speed", "cache", "context", "model"]]
 
     def test_footer_not_dict_returns_default(self) -> None:
         cfg = _make_config({"streaming": {"footer": "invalid"}})
-        assert cfg.footer_fields == [["status", "elapsed", "model", "context"]]
+        assert cfg.footer_fields == [["status", "elapsed", "speed", "cache", "context", "model"]]
 
     def test_fields_non_list_returns_default(self) -> None:
         cfg = _make_config({"streaming": {"footer": {"fields": "status"}}})
-        assert cfg.footer_fields == [["status", "elapsed", "model", "context"]]
+        assert cfg.footer_fields == [["status", "elapsed", "speed", "cache", "context", "model"]]
 
 
 class TestHeaderEnabled:
@@ -332,6 +332,54 @@ class TestShowToolUse:
             }
         })
         assert cfg.show_tool_use is False
+
+
+class TestPanelFields:
+    _DEFAULT = ["model", "reasoning", "tools", "context", "elapsed"]
+
+    def _make_config(self, raw: dict[str, Any]) -> Config:
+        """Create a Config with _reload mocked to return given raw dict."""
+        cfg = Config()
+        cfg._reload = lambda: raw  # type: ignore[assignment]
+        return cfg
+
+    def test_default(self) -> None:
+        assert self._make_config({}).panel_fields == self._DEFAULT
+
+    def test_platform_level(self) -> None:
+        cfg = self._make_config({
+            "display": {"platforms": {"feishu": {"panel_fields": ["cache", "speed"]}}}
+        })
+        assert cfg.panel_fields == ["cache", "speed"]
+
+    def test_global_fallback(self) -> None:
+        cfg = self._make_config({"display": {"panel_fields": ["elapsed"]}})
+        assert cfg.panel_fields == ["elapsed"]
+
+    def test_platform_takes_priority_over_global(self) -> None:
+        cfg = self._make_config({
+            "display": {
+                "platforms": {"feishu": {"panel_fields": ["model"]}},
+                "panel_fields": ["elapsed"],
+            }
+        })
+        assert cfg.panel_fields == ["model"]
+
+    def test_empty_returns_default(self) -> None:
+        cfg = self._make_config({"display": {"platforms": {"feishu": {"panel_fields": []}}}})
+        assert cfg.panel_fields == self._DEFAULT
+
+    def test_non_list_returns_default(self) -> None:
+        cfg = self._make_config({"display": {"platforms": {"feishu": {"panel_fields": "model"}}}})
+        assert cfg.panel_fields == self._DEFAULT
+
+    def test_non_string_items_return_default(self) -> None:
+        cfg = self._make_config({"display": {"platforms": {"feishu": {"panel_fields": ["model", 3]}}}})
+        assert cfg.panel_fields == self._DEFAULT
+
+    def test_display_not_dict(self) -> None:
+        cfg = self._make_config({"display": "invalid"})
+        assert cfg.panel_fields == self._DEFAULT
 
 
 class TestPlatformCfg:

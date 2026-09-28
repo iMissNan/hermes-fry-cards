@@ -412,6 +412,34 @@ class Config:
         return "text"
 
     @property
+    def panel_fields(self) -> list[str]:
+        """统一面板 header 字段组合（有序一维列表）.
+
+        与 footer 共用字段池：status/elapsed/speed/cache/tokens/context/model，
+        另有面板专属计数 reasoning（💭 推理轮数）/ tools（🔧 工具步数）。
+        context 受 show_context 总闸与 context_display_mode 样式控制。
+
+        优先级：display.platforms.feishu.panel_fields → display.panel_fields，
+        默认 ["model", "reasoning", "tools", "context", "elapsed"]（历史默认布局）。
+        非法或为空回落默认。
+        """
+        default = ["model", "reasoning", "tools", "context", "elapsed"]
+        display = self._reload().get("display")
+        if not isinstance(display, dict):
+            return default
+        raw: Any = None
+        platforms = display.get("platforms")
+        if isinstance(platforms, dict):
+            feishu = platforms.get("feishu")
+            if isinstance(feishu, dict) and "panel_fields" in feishu:
+                raw = feishu["panel_fields"]
+        if raw is None and "panel_fields" in display:
+            raw = display["panel_fields"]
+        if isinstance(raw, list) and raw and all(isinstance(x, str) and x for x in raw):
+            return list(raw)
+        return default
+
+    @property
     def feishu_app_id(self) -> str:
         return str(self._platform_cfg().get("app_id", ""))
 
@@ -524,7 +552,7 @@ class Config:
 
     @staticmethod
     def _default_footer_fields() -> list[list[str]]:
-        return [["status", "elapsed", "model", "context"]]
+        return [["status", "elapsed", "speed", "cache", "context", "model"]]
 
     @property
     def env_app_id(self) -> str:

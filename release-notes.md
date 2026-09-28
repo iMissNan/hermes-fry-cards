@@ -1,3 +1,34 @@
+## 🍟 hermes-fry-cards v0.4.2（速度 / 缓存命中率 · 字段自由组合）
+
+> 完成卡片对齐主流编程客户端的统计展示：footer 与统一面板 header 新增**速度（tok/s）**与
+> **缓存命中率**，口径与 Hermes CLI 状态栏完全一致；两处元数据栏的字段全部可在 Studio
+> 自由勾选组合。
+
+**⚡ 统计字段**
+
+- footer 新增 `speed`（tok/s）与 `cache`（缓存命中 %）：速度 = 近 10 次 API 调用
+  `sum(output)/sum(latency)` 纯生成吞吐（剔除工具耗时）；命中率 = `cache_read / prompt_tokens`
+  （prompt 已含缓存，同 Hermes 归一化口径）；零读取/无数据自动隐藏（无数据 ≠ 0%）
+- 默认 footer 布局：`[status, elapsed, speed, cache, context, model]`
+
+**🧩 字段自由组合**
+
+- 统一面板 header 字段化：`display.platforms.feishu.panel_fields` 与 footer 共用字段池
+  （status/elapsed/speed/cache/tokens/context/model）+ 面板专属 `reasoning`/`tools` 计数
+- 默认 `[model, reasoning, tools, context, elapsed]`，与历史布局逐字一致，老用户无感
+- Studio chip 开关式勾选（参考 CreditDaddy 仪表盘组件交互），预览实时渲染新字段
+
+**🛠️ 修复**
+
+- Studio footer 字段白名单缺 `speed`/`cache`：GUI 勾选新字段保存 400 的坑（已补测试回归）
+
+**⬆️ 升级注意**
+
+- 注入模板变更：已装环境重跑 `hermes_fry_cards uninstall` + `install` 后重启网关即可；
+  旧模板不传新键，向后兼容（字段自动隐藏）
+
+---
+
 ## 🍟 hermes-fry-cards v0.4.1（Studio 自启与保活 · 默认绑 0.0.0.0）
 
 > 新增 systemd 用户服务模板，让 Studio 支持开机/登录自启、异常退出自动重启、日志交给 `journalctl`；

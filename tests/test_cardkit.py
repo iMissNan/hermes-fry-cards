@@ -266,6 +266,54 @@ class TestBuildFooterElements:
     def test_no_matching_fields(self) -> None:
         assert _build_footer_elements({}, fields=[["tokens"]]) == []
 
+    def test_speed_displayed(self) -> None:
+        result = _build_footer_elements({"tokens_per_sec": 207.6}, fields=[["speed"]])
+        assert "208 tok/s" in result[0]["content"]
+
+    def test_speed_hidden_without_data(self) -> None:
+        assert _build_footer_elements({}, fields=[["speed"]]) == []
+        assert _build_footer_elements({"tokens_per_sec": 0}, fields=[["speed"]]) == []
+
+    def test_cache_displayed(self) -> None:
+        # 命中率 = cache_read / input_tokens（prompt 已含缓存，口径同 Hermes）
+        result = _build_footer_elements(
+            {"cache_read_tokens": 8300, "input_tokens": 15420},
+            fields=[["cache"]],
+        )
+        assert "Cache hit 54%" in result[0]["content"]
+        assert "缓存命中 54%" in result[0]["i18n_content"]["zh_cn"]
+
+    def test_cache_hidden_without_data(self) -> None:
+        # 无缓存读取或无 prompt 分母时隐藏（零读取 ≠ 0%）
+        assert _build_footer_elements({}, fields=[["cache"]]) == []
+        assert _build_footer_elements({"cache_read_tokens": 100}, fields=[["cache"]]) == []
+        assert _build_footer_elements({"input_tokens": 100}, fields=[["cache"]]) == []
+        assert _build_footer_elements(
+            {"cache_read_tokens": 0, "input_tokens": 100}, fields=[["cache"]]
+        ) == []
+
+    def test_cache_pct_capped_at_100(self) -> None:
+        result = _build_footer_elements(
+            {"cache_read_tokens": 2000, "input_tokens": 1000},
+            fields=[["cache"]],
+        )
+        assert "100%" in result[0]["content"]
+
+    def test_default_fields_include_speed_and_cache(self) -> None:
+        result = _build_footer_elements(
+            {
+                "tokens_per_sec": 208,
+                "cache_read_tokens": 8300,
+                "input_tokens": 15420,
+                "context_used": 50000,
+                "context_max": 200000,
+                "model": "deepseek-v4",
+            },
+        )
+        content = result[0]["content"]
+        for piece in ("208 tok/s", "Cache hit 54%", "50.0K", "deepseek-v4"):
+            assert piece in content
+
 
 # --- 推理面板 ---
 
@@ -425,10 +473,10 @@ def _seg(seg_type: str, text: str = "", **kwargs: int | float) -> Segment:
 
 
 def _unified_panel(card: dict) -> dict:
-    """取完成态卡片的统一面板（header 带 💭 的顶层 collapsible_panel）."""
+    """取完成态卡片的统一面板（顶层唯一 collapsible_panel，思考/工具面板嵌套其内）."""
     return next(
         e for e in card["body"]["elements"]
-        if e.get("tag") == "collapsible_panel" and "💭" in str(e.get("header", {}))
+        if e.get("tag") == "collapsible_panel"
     )
 
 
@@ -489,11 +537,8 @@ class TestBuildSegmentCompleteCard:
             show_tool_use=True,
         )
         elements = card["body"]["elements"]
-        # 统一面板是 header 带 💭（推理计数）的 collapsible_panel，推理+工具合并于其内
-        unified = [
-            e for e in elements
-            if e.get("tag") == "collapsible_panel" and "💭" in str(e.get("header", {}))
-        ]
+        # 统一面板是顶层 collapsible_panel（推理+工具合并于其内）
+        unified = [_unified_panel(card)]
         # 恰好一个统一面板，且包含推理内容
         assert len(unified) == 1
         # 统一面板在卡片底部（answer 之后）
@@ -501,7 +546,7 @@ class TestBuildSegmentCompleteCard:
         a_idx = next(i for i, c in enumerate(contents) if "a1" in c)
         panel_idx = next(
             i for i, e in enumerate(elements)
-            if e.get("tag") == "collapsible_panel" and "💭" in str(e.get("header", {}))
+            if e.get("tag") == "collapsible_panel"
         )
         assert a_idx < panel_idx
 
@@ -634,6 +679,75 @@ class TestBuildSegmentCompleteCard:
         )
         summary = card["config"].get("summary", {}).get("content", "")
         assert len(summary) <= 120
+
+
+class TestPanelHeaderFields:
+    """统一面板 header 字段组合 — 与 footer 共用字段池 + 面板专属计数."""
+
+    def _card(self, *, panel_fields=None, footer_data=None) -> dict:
+        return build_complete_card(
+            segments=[
+                _seg("reasoning", "think"),
+                _seg("tool", tool_offset=0, tool_end_offset=1),
+                _seg("answer", "reply"),
+            ],
+            all_tool_steps=[_STEP_SUCCESS],
+            footer_data=footer_data or {"duration": 8.0},
+            panel_fields=panel_fields,
+        )
+
+    @staticmethod
+    def _panel(card: dict) -> dict:
+        # 顶层唯一的 collapsible_panel 即统一面板（工具面板是其嵌套子元素）
+        return next(e for e in card["body"]["elements"] if e.get("tag") == "collapsible_panel")
+
+    def test_default_composition(self) -> None:
+        panel = self._panel(self._card(footer_data={"duration": 8.0, "model": "deepseek-v4"}))
+        title = panel["header"]["title"]["content"]
+        assert "🍟 deepseek-v4" in title
+        assert "💭1" in title
+        assert "🔧1" in title
+        assert "⏱️ 8.0s" in title
+
+    def test_custom_fields_speed_cache(self) -> None:
+        panel = self._panel(self._card(
+            panel_fields=["cache", "speed"],
+            footer_data={
+                "duration": 8.0,
+                "input_tokens": 15420,
+                "cache_read_tokens": 8300,
+                "tokens_per_sec": 208,
+            },
+        ))
+        title = panel["header"]["title"]["content"]
+        assert "Cache hit 54%" in title
+        assert "208 tok/s" in title
+        assert "💭" not in title  # 未选思考计数
+
+    def test_header_i18n_zh(self) -> None:
+        panel = self._panel(self._card(
+            panel_fields=["cache"],
+            footer_data={"duration": 8.0, "input_tokens": 15420, "cache_read_tokens": 8300},
+        ))
+        assert "缓存命中 54%" in panel["header"]["title"]["i18n_content"]["zh_cn"]
+
+    def test_unknown_fields_ignored(self) -> None:
+        panel = self._panel(self._card(
+            panel_fields=["model", "bogus_field"],
+            footer_data={"duration": 8.0, "model": "m1"},
+        ))
+        assert "🍟 m1" in panel["header"]["title"]["content"]
+
+    def test_all_hidden_falls_back_to_placeholder(self) -> None:
+        panel = self._panel(self._card(panel_fields=["model"], footer_data={"duration": 8.0}))
+        assert panel["header"]["title"]["content"] == "🍟"
+
+    def test_context_hidden_when_no_data(self) -> None:
+        panel = self._panel(self._card(
+            panel_fields=["context"],
+            footer_data={"duration": 8.0},
+        ))
+        assert panel["header"]["title"]["content"] == "🍟"
 
 
 class TestBuildCronCard:
