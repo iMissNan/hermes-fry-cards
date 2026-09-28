@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.3] - 2026-09-28
+
+### 修复 / Fixed
+- **Studio「面板 header 字段」chips 点击无反应** — 0.4.2 新增的统一面板字段选择区漏绑
+  click 事件（footer 字段区已有），点击无法切换选中态；补齐事件绑定，勾选/取消恢复正常，
+  保存排序（PANEL_FIELD_ORDER）与 `display.platforms.feishu.panel_fields` 写入链路不变。
+
+---
+
 ## [0.4.2] - 2026-09-28
 
 ### 新增 / Added

@@ -252,6 +252,13 @@
     });
   });
 
+  document.querySelectorAll("#f-panel-fields .chip").forEach(function (c) {
+    c.addEventListener("click", function () {
+      if (c.disabled) return;
+      c.classList.toggle("on");
+    });
+  });
+
   /* ---------- 预览 ---------- */
   $("#p-state").addEventListener("change", function () {
     var streaming = $("#p-state").value === "streaming";

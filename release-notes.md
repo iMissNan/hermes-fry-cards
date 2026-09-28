@@ -1,3 +1,12 @@
+## 🍟 hermes-fry-cards v0.4.3（Studio 面板字段 chips 修复）
+
+- 修复 0.4.2 的「面板 header 字段」选择区 **chips 点击无反应**（漏绑 click 事件）
+- 勾选/取消恢复正常，保存仍按 `PANEL_FIELD_ORDER` 排序写入
+  `display.platforms.feishu.panel_fields`
+- 无注入模板变更，升级仅需更新包 + 刷新 Studio 页面
+
+---
+
 ## 🍟 hermes-fry-cards v0.4.2（速度 / 缓存命中率 · 字段自由组合）
 
 > 完成卡片对齐主流编程客户端的统计展示：footer 与统一面板 header 新增**速度（tok/s）**与
