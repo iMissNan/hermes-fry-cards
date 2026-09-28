@@ -1038,6 +1038,71 @@ class TestAwaitedCompletion:
         ]
 
     @pytest.mark.asyncio
+    async def test_completion_answer_with_reasoning_tags_not_duplicated(self) -> None:
+        ctrl = _setup_ctrl()
+        session = CardSession("msg_final_tagged", "chat", asyncio.get_running_loop())
+        session.state = SessionState.STREAMING
+        session.card_id = "card_final_tagged"
+        session.card_msg_id = "card_msg_final_tagged"
+        session.segment_state = SegmentState()
+        session.segment_state.on_answer_delta("Hello")
+        ctrl._sessions[session.message_id] = session
+
+        with patch.object(ctrl, "_complete_session_wait", new_callable=AsyncMock, return_value=True):
+            assert await ctrl.on_completed_wait(
+                message_id=session.message_id,
+                answer="<think>rea</think>Hello",
+            ) is True
+
+        # 标签内 reasoning 已剥掉，答案与流式段去重，不再追加重复段
+        assert [seg.text for seg in session.segment_state.segments] == ["Hello"]
+
+    @pytest.mark.asyncio
+    async def test_completion_answer_with_hermes_reasoning_prepend_not_duplicated(self) -> None:
+        ctrl = _setup_ctrl()
+        session = CardSession("msg_final_prepend", "chat", asyncio.get_running_loop())
+        session.state = SessionState.STREAMING
+        session.card_id = "card_final_prepend"
+        session.card_msg_id = "card_msg_final_prepend"
+        session.segment_state = SegmentState()
+        session.segment_state.on_reasoning_delta("step 1")
+        session.segment_state.on_answer_delta("Hello")
+        ctrl._sessions[session.message_id] = session
+
+        with patch.object(ctrl, "_complete_session_wait", new_callable=AsyncMock, return_value=True):
+            assert await ctrl.on_completed_wait(
+                message_id=session.message_id,
+                answer="💭 **Reasoning:**\n```\nstep 1\nstep 2\n```\n\nHello",
+            ) is True
+
+        answers = [seg.text for seg in session.segment_state.segments if seg.type == "answer"]
+        assert answers == ["Hello"]
+        # reasoning 只保留 💭 面板这一份（segments 里的 reasoning 段）
+        assert [
+            seg.text for seg in session.segment_state.segments if seg.type == "reasoning"
+        ] == ["step 1"]
+
+    @pytest.mark.asyncio
+    async def test_thinking_tagged_text_does_not_leak_into_answer(self) -> None:
+        ctrl = _setup_ctrl()
+        session = CardSession("msg_think_tags", "chat", asyncio.get_running_loop())
+        session.state = SessionState.STREAMING
+        session.card_id = "card_think_tags"
+        session.card_msg_id = "card_msg_think_tags"
+        session.segment_state = SegmentState()
+        ctrl._sessions[session.message_id] = session
+
+        ctrl.on_thinking(message_id=session.message_id, text="<think>rea</think>")
+        ctrl.on_thinking(message_id=session.message_id, text="Reasoning:\n_more_")
+        ctrl.on_answer(message_id=session.message_id, text="<think>rea2</think>Hello")
+
+        types = [seg.type for seg in session.segment_state.segments]
+        # 只有 reasoning 段 + 干净 answer 段，无泄漏出来的中间 answer 段
+        assert types == ["reasoning", "answer"]
+        assert session.segment_state.segments[0].text == "reamore"
+        assert session.segment_state.segments[1].text == "Hello"
+
+    @pytest.mark.asyncio
     async def test_completion_payload_does_not_duplicate_on_repeated_completion(self) -> None:
         ctrl = _setup_ctrl()
         session = CardSession("msg_repeat_completion", "chat", asyncio.get_running_loop())
