@@ -992,6 +992,74 @@ class TestAwaitedCompletion:
         assert session.segment_state.segments[0].text == "short"
 
     @pytest.mark.asyncio
+    async def test_interim_answer_does_not_suppress_final_completion_answer(self) -> None:
+        ctrl = _setup_ctrl()
+        session = CardSession("msg_interim_final", "chat", asyncio.get_running_loop())
+        session.state = SessionState.STREAMING
+        session.card_id = "card_interim_final"
+        session.card_msg_id = "card_msg_interim_final"
+        session.segment_state = SegmentState()
+        # Interim prose in Hermes's stream_delta_cb appears between tool calls.
+        session.segment_state.on_answer_delta("先检查它是否安装")
+        session.segment_state.on_tool_event(1)
+        session.segment_state.on_answer_delta("现在安装并验证")
+        ctrl._sessions[session.message_id] = session
+
+        with patch.object(ctrl, "_complete_session_wait", new_callable=AsyncMock, return_value=True):
+            assert await ctrl.on_completed_wait(
+                message_id=session.message_id,
+                answer="最终结果：已成功安装并通过验证。",
+            ) is True
+
+        answers = [
+            seg.text for seg in session.segment_state.segments if seg.type == "answer"
+        ]
+        assert answers == ["先检查它是否安装", "现在安装并验证", "最终结果：已成功安装并通过验证。"]
+
+    @pytest.mark.asyncio
+    async def test_streamed_final_answer_is_not_duplicated(self) -> None:
+        ctrl = _setup_ctrl()
+        session = CardSession("msg_final_streamed", "chat", asyncio.get_running_loop())
+        session.state = SessionState.STREAMING
+        session.card_id = "card_final_streamed"
+        session.card_msg_id = "card_msg_final_streamed"
+        session.segment_state = SegmentState()
+        session.segment_state.on_answer_delta("此前文本。最终结果：已完成。")
+        ctrl._sessions[session.message_id] = session
+
+        with patch.object(ctrl, "_complete_session_wait", new_callable=AsyncMock, return_value=True):
+            assert await ctrl.on_completed_wait(
+                message_id=session.message_id,
+                answer="最终结果：已完成。",
+            ) is True
+
+        assert [seg.text for seg in session.segment_state.segments] == [
+            "此前文本。最终结果：已完成。"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_completion_payload_does_not_duplicate_on_repeated_completion(self) -> None:
+        ctrl = _setup_ctrl()
+        session = CardSession("msg_repeat_completion", "chat", asyncio.get_running_loop())
+        session.state = SessionState.STREAMING
+        session.card_id = "card_repeat_completion"
+        session.card_msg_id = "card_msg_repeat_completion"
+        session.segment_state = SegmentState()
+        session.segment_state.on_answer_delta("interim")
+        ctrl._sessions[session.message_id] = session
+
+        with patch.object(ctrl, "_complete_session_wait", new_callable=AsyncMock, return_value=True):
+            for _ in range(2):
+                assert await ctrl.on_completed_wait(
+                    message_id=session.message_id,
+                    answer="final answer",
+                ) is True
+
+        assert [seg.text for seg in session.segment_state.segments] == [
+            "interim", "final answer"
+        ]
+
+    @pytest.mark.asyncio
     async def test_agent_failure_finalizes_card_as_error(self) -> None:
         ctrl = _setup_ctrl()
         session = CardSession("msg_error", "chat", asyncio.get_running_loop())
@@ -1006,6 +1074,65 @@ class TestAwaitedCompletion:
             ) is True
 
         assert session.state == SessionState.FAILED
+
+    @pytest.mark.asyncio
+    async def test_completion_notice_sent_only_after_successful_card_finish(self) -> None:
+        ctrl = _setup_ctrl()
+        ctrl._cfg._raw["streaming"]["completion_notice"] = True
+        ctrl._cfg._raw["streaming"]["completion_notice_text"] = "回答结束"
+        session = CardSession("msg_notice", "chat", asyncio.get_running_loop())
+        session.state = SessionState.STREAMING
+        session.card_id = "card_notice"
+        session.card_msg_id = "card_msg_notice"
+        session.footer = {"duration": 12.3}
+        ctrl._sessions[session.message_id] = session
+
+        with patch.object(ctrl, "_complete_session_wait", new_callable=AsyncMock, return_value=True), patch.object(
+            ctrl, "_fire_and_forget", return_value=None
+        ) as fire:
+            assert await ctrl.on_completed_wait(
+                message_id=session.message_id, answer="done", duration=12.3
+            ) is True
+
+        coroutine, loop = fire.call_args.args
+        try:
+            assert loop is session._loop
+            assert coroutine.cr_code.co_name == "_send_completion_notice"
+            assert coroutine.cr_frame.f_locals["text"] == "回答结束 · 12s"
+        finally:
+            coroutine.close()
+
+    @pytest.mark.asyncio
+    async def test_completion_notice_send_failure_is_isolated(self) -> None:
+        ctrl = _setup_ctrl()
+        ctrl._client.send_text_to_chat = AsyncMock(side_effect=RuntimeError("send failed"))
+        session = CardSession("msg_notice_send_fail", "chat", asyncio.get_running_loop())
+        session.card_msg_id = "card_msg_notice_send_fail"
+
+        await ctrl._send_completion_notice(session, "回答结束 · 出错")
+
+        ctrl._client.send_text_to_chat.assert_awaited_once_with(
+            "chat", "回答结束 · 出错", reply_to_message_id="card_msg_notice_send_fail"
+        )
+
+    @pytest.mark.asyncio
+    async def test_completion_notice_not_sent_when_card_finish_fails(self) -> None:
+        ctrl = _setup_ctrl()
+        ctrl._cfg._raw["streaming"]["completion_notice"] = True
+        session = CardSession("msg_notice_fail", "chat", asyncio.get_running_loop())
+        session.state = SessionState.STREAMING
+        session.card_id = "card_notice_fail"
+        session.card_msg_id = "card_msg_notice_fail"
+        ctrl._sessions[session.message_id] = session
+
+        with patch.object(ctrl, "_complete_session_wait", new_callable=AsyncMock, return_value=False), patch.object(
+            ctrl, "_fire_and_forget"
+        ) as fire:
+            assert await ctrl.on_completed_wait(
+                message_id=session.message_id, answer="done"
+            ) is False
+
+        fire.assert_not_called()
 
 
 @pytest.mark.asyncio

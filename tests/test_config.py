@@ -164,6 +164,20 @@ class TestCardDurationSec:
         assert cfg.card_duration_sec == 600
 
 
+class TestCompletionNotice:
+    def test_disabled_by_default(self) -> None:
+        assert _make_config({"streaming": {}}).completion_notice is False
+
+    def test_reads_enabled_and_custom_text(self) -> None:
+        cfg = _make_config({"streaming": {"completion_notice": True, "completion_notice_text": "Done"}})
+        assert cfg.completion_notice is True
+        assert cfg.completion_notice_text == "Done"
+
+    def test_blank_text_uses_default(self) -> None:
+        cfg = _make_config({"streaming": {"completion_notice_text": "  "}})
+        assert cfg.completion_notice_text == "回答结束"
+
+
 class TestWidthMode:
     def test_default_when_missing(self) -> None:
         cfg = _make_config({"streaming": {}})

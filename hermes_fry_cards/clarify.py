@@ -33,6 +33,22 @@ _logger = logging.getLogger("hermes_fry_cards")
 _CLARIFY_STATE: Dict[str, Dict[str, Any]] = {}
 _CLARIFY_SELECTIONS: Dict[str, List[int]] = {}
 _STATE_CAP = 100
+_TOAST_UNLOADED = object()
+_TOAST_MODULE = "lark_oapi.event.callback.model.p2_card_action_trigger"
+
+
+def _get_callback_toast(self: Any) -> Any:
+    """Load the optional SDK toast class only when callback feedback is needed."""
+    toast_cls = getattr(self, "_hl_CallBackToast", _TOAST_UNLOADED)
+    if toast_cls is _TOAST_UNLOADED:
+        try:
+            from lark_oapi.event.callback.model.p2_card_action_trigger import (
+                CallBackToast as toast_cls,
+            )
+        except Exception:
+            toast_cls = None
+        self._hl_CallBackToast = toast_cls
+    return toast_cls
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +301,7 @@ def _callback_card(
         card.data = card_data
         response.card = card
     if toast_content and response is not None:
-        CallBackToast = getattr(self, "_hl_CallBackToast", None)
+        CallBackToast = _get_callback_toast(self)
         if CallBackToast is not None:
             toast = CallBackToast()
             toast.type = toast_type or "info"
@@ -528,7 +544,7 @@ def handle_approval_card_action_patched(
         # click a visible answer instead of silence (toast only — an empty
         # card payload would blank the original message on some clients).
         response = _empty_trigger_response(self)
-        CallBackToast = getattr(self, "_hl_CallBackToast", None)
+        CallBackToast = _get_callback_toast(self)
         if response is not None and CallBackToast is not None:
             toast = CallBackToast()
             toast.type = "warning"
@@ -572,7 +588,7 @@ def handle_approval_card_action_patched(
         toast_type, toast_content = _APPROVAL_TOASTS.get(
             choice, ("info", "审批已处理")
         )
-        CallBackToast = getattr(self, "_hl_CallBackToast", None)
+        CallBackToast = _get_callback_toast(self)
         if CallBackToast is not None and getattr(response, "toast", None) is None:
             toast = CallBackToast()
             toast.type = toast_type
@@ -616,13 +632,7 @@ def apply_patch(
     cls._hl_SendResult = SendResult
     cls._hl_CallBackCard = CallBackCard
     cls._hl_P2CardActionTriggerResponse = P2CardActionTriggerResponse
-    try:  # toast needs its own class; absent on older SDKs (degrades silently)
-        from lark_oapi.event.callback.model.p2_card_action_trigger import (
-            CallBackToast as _Toast,
-        )
-    except Exception:
-        _Toast = None
-    cls._hl_CallBackToast = _Toast
+    cls._hl_CallBackToast = _TOAST_UNLOADED
     cls._hl_orig_card_action_trigger = cls._on_card_action_trigger
     # Approval gate fix: wrap the original handler + group-admission gate.
     # Both are instance methods on the real adapter; guard with getattr for

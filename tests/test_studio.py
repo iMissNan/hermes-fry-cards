@@ -135,9 +135,62 @@ class TestValidation:
         assert "streaming" not in out
         assert out["display"]["show_reasoning"] is False
 
-    def test_textsize_accepts_normal_v2(self) -> None:
-        out = srv.validate_payload({"streaming": {"body": {"text_size": "normal_v2"}}})
-        assert out["streaming"]["body"]["text_size"] == "normal_v2"
+    @pytest.mark.parametrize("size", ["normal_v2", "normal", "heading", "notation"])
+    def test_textsize_accepts_supported_values(self, size: str) -> None:
+        out = srv.validate_payload({"streaming": {"body": {"text_size": size}}})
+        assert out["streaming"]["body"]["text_size"] == size
+
+    def test_textsize_rejects_unknown_value(self) -> None:
+        with pytest.raises(ValueError, match="text_size"):
+            srv.validate_payload({"streaming": {"body": {"text_size": "huge"}}})
+
+    def test_completion_notice_settings_validate_and_merge(self) -> None:
+        payload = srv.validate_payload({"streaming": {
+            "completion_notice": True,
+            "completion_notice_text": "完成啦",
+        }})
+        merged, _ = srv.merge_managed({}, payload)
+        assert merged["streaming"]["completion_notice"] is True
+        assert merged["streaming"]["completion_notice_text"] == "完成啦"
+        with pytest.raises(ValueError, match="completion_notice_text"):
+            srv.validate_payload({"streaming": {"completion_notice_text": " "}})
+
+    def test_completion_notice_state_roundtrip(self, server: str, home: Path) -> None:
+        _post_ok(server, "/api/config", {"streaming": {
+            "completion_notice": True,
+            "completion_notice_text": "答复完成",
+        }})
+        state = _get_json(server, "/api/state")
+        assert state["streaming"]["completion_notice"] is True
+        assert state["streaming"]["completion_notice_text"] == "答复完成"
+        cfg = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
+        assert cfg["streaming"]["completion_notice"] is True
+        assert cfg["streaming"]["completion_notice_text"] == "答复完成"
+
+    def test_preview_uses_heading_text_size(self, server: str) -> None:
+        data = _post_ok(server, "/api/preview", {
+            "scenario": "short",
+            "overrides": {"streaming": {"body": {"text_size": "heading"}}},
+        })
+        assert any(
+            element.get("text_size") == "heading"
+            for element in data["card"]["body"]["elements"]
+        )
+
+    def test_studio_ui_exposes_notice_and_heading(self) -> None:
+        html = (srv._WEB_ROOT / "index.html").read_text(encoding="utf-8")
+        assert 'id="f-completion-notice"' in html
+        assert 'id="f-completion-notice-text"' in html
+        assert 'value="heading"' in html
+        js = (srv._WEB_ROOT / "js" / "app.js").read_text(encoding="utf-8")
+        assert '"f-completion-notice"' in js
+        assert '"f-completion-notice-text"' in js
+        assert 'completion_notice_text:' in js
+
+
+# ---------------------------------------------------------------------------
+# 纯函数：白名单合并 / 备份 / 原子写
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------

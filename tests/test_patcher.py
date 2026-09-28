@@ -777,6 +777,7 @@ class TestCronApplyRemove:
         content = scheduler_copy.read_text(encoding="utf-8")
         assert "on_cron_deliver" in content
         assert "str(_lark_platform_name).lower()" in content
+        assert "isinstance(_lark_delivery, dict)" in content
         assert "is_relay" in content
         assert "injected hook failed: cron_deliver" in content
         assert "delivered = True" in content
@@ -798,14 +799,7 @@ class TestCronApplyRemove:
         ):
             fallback = deliver(targets, " failed ", object())
 
-        assert sent == [
-            (
-                "oc_same",
-                "failed",
-                "test",
-                "2026-06-10T14:30:00+08:00",
-            )
-        ]
+        assert sent == [("oc_same", "failed", "test", "2026-06-10T14:30:00+08:00")]
         assert fallback == []
 
     def test_injected_hook_retries_duplicate_target_after_failure(self) -> None:
@@ -830,6 +824,47 @@ class TestCronApplyRemove:
 
         assert fallback == ["oc_relay"]
         mock_deliver.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("delivery", "target", "expected_chat"),
+        [
+            (
+                {"platform_name": "feishu", "chat_id": "oc_dict", "transport": None},
+                {"platform": "telegram", "chat_id": "oc_wrong"},
+                "oc_dict",
+            ),
+            (
+                SimpleNamespace(platform_name="feishu", chat_id="oc_object", transport=None),
+                {"platform": "telegram", "chat_id": "oc_wrong"},
+                "oc_object",
+            ),
+            (
+                SimpleNamespace(platform_name="", chat_id=""),
+                {"platform": "feishu", "chat_id": "oc_target"},
+                "oc_target",
+            ),
+        ],
+        ids=["delivery-dict-wins", "delivery-object-wins", "target-fallback"],
+    )
+    def test_uses_resolved_delivery_identity(self, delivery, target, expected_chat: str) -> None:
+        namespace = {
+            "job": {"name": "weekly", "next_run_at": "2026-09-28T10:00:00Z"},
+            "target": target,
+            "t": delivery,
+        }
+        source = (
+            "def deliver(cleaned_delivery_content, loop, t, target):\n"
+            "    delivered = False\n"
+            "    for _ in (None,):\n"
+            "        transport = None\n"
+            f"{_cron_deliver_hook('        ')}"
+            "    return delivered\n"
+        )
+        exec(compile(source, "<cron-resolved-target-test>", "exec"), namespace)
+        with patch("hermes_fry_cards.patch.on_cron_deliver", return_value=True) as mock_deliver:
+            assert namespace["deliver"]("weekly report", None, delivery, target) is True
+        mock_deliver.assert_called_once()
+        assert mock_deliver.call_args.kwargs["chat_id"] == expected_chat
 
 
 class TestCronBackupRestore:

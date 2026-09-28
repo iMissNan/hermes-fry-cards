@@ -44,7 +44,7 @@
             </select>
           </label>
           <label class="row"><span class="lbl">正文文字大小</span>
-            <select id="f-body-text-size"><option value="normal_v2">normal_v2</option><option value="normal">normal</option><option value="notation">notation（小）</option></select>
+            <select id="f-body-text-size"><option value="normal_v2">normal_v2</option><option value="normal">normal</option><option value="heading">heading（大）</option><option value="notation">notation（小）</option></select>
           </label>
         </fieldset>
 
@@ -76,6 +76,13 @@
               <span class="lbl" id="fields-note" hidden>当前为多行字段配置：保存时原样保留，UI 不可编辑。</span>
             </div>
           </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>完成通知</legend>
+          <label class="row"><span class="lbl">卡片完成后发送提醒消息</span><input type="checkbox" id="f-completion-notice"></label>
+          <label class="row"><span class="lbl">提醒文字前缀</span><input type="text" id="f-completion-notice-text" maxlength="80"></label>
+          <div class="hint">通知会回复在卡片消息下，仅在卡片成功收尾后发送；错误会附带「出错」。</div>
         </fieldset>
 
         <fieldset>

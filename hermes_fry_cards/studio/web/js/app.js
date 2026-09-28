@@ -72,6 +72,8 @@
     setCheck("f-enabled", s.enabled);
     setVal("f-width", s.width_mode);
     setCheck("f-panel-expanded", s.panel_expanded);
+    setCheck("f-completion-notice", s.completion_notice);
+    setVal("f-completion-notice-text", s.completion_notice_text);
     setVal("f-content-lang", s.content_lang);
 
     // 聊天类型：三选项覆盖常见形态；异常值显示自定义项并在保存时原样保留
@@ -153,6 +155,8 @@
         content_lang: $("#f-content-lang").value,
         chat_types: chatTypes,
         panel_expanded: $("#f-panel-expanded").checked,
+        completion_notice: $("#f-completion-notice").checked,
+        completion_notice_text: $("#f-completion-notice-text").value,
         width_mode: $("#f-width").value,
         header: {
           enabled: $("#f-header-enabled").checked,

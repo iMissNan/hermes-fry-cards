@@ -125,6 +125,39 @@ async def test_send_card_to_chat_reuses_uuid_across_retries() -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_text_to_chat_uses_chat_id_and_text_message() -> None:
+    create = AsyncMock(
+        return_value=_Resp(ok=True, data=SimpleNamespace(message_id="msg-text"))
+    )
+    client = _client_with(create_message=create)
+
+    assert await client.send_text_to_chat("oc_test", "done") == "msg-text"
+
+    request = create.await_args.args[0]
+    assert request.receive_id_type == "chat_id"
+    assert request.request_body.receive_id == "oc_test"
+    assert request.request_body.msg_type == "text"
+    assert request.request_body.content == '{"text": "done"}'
+
+
+@pytest.mark.asyncio
+async def test_send_text_to_chat_can_reply_to_card_message() -> None:
+    reply = AsyncMock(
+        return_value=_Resp(ok=True, data=SimpleNamespace(message_id="msg-reply"))
+    )
+    client = _client_with(reply=reply)
+
+    assert await client.send_text_to_chat(
+        "oc_test", "done", reply_to_message_id="om_card"
+    ) == "msg-reply"
+
+    request = reply.await_args.args[0]
+    assert request.message_id == "om_card"
+    assert request.request_body.msg_type == "text"
+    assert request.request_body.content == '{"text": "done"}'
+
+
+@pytest.mark.asyncio
 async def test_cardkit_create_does_not_retry_non_transient_error() -> None:
     create = AsyncMock(side_effect=[_Resp(ok=False, code=230099, msg="content failed")])
     client = _client_with(card_create=create)

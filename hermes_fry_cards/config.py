@@ -448,6 +448,17 @@ class Config:
         return str(body.get("text_size", "normal_v2")) or "normal_v2"
 
     @property
+    def completion_notice(self) -> bool:
+        """Whether to send a short message after a card finishes successfully."""
+        return bool(self._streaming_sec().get("completion_notice", False))
+
+    @property
+    def completion_notice_text(self) -> str:
+        """Configured prefix for successful/error completion notices."""
+        value = str(self._streaming_sec().get("completion_notice_text", "回答结束")).strip()
+        return value or "回答结束"
+
+    @property
     def width_mode(self) -> str:
         """Card 宽度模式: default / compact / fill."""
         raw = str(self._streaming_sec().get("width_mode", "default") or "default").strip().lower()

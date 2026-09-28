@@ -50,6 +50,7 @@ _FOOTER_FIELDS = ("status", "elapsed", "model", "tokens", "context")
 _WIDTH_MODES = ("default", "compact", "fill")
 _CONTEXT_MODES = ("text", "bar", "text_bar", "block", "block_text")
 _LANGS = ("zh", "en")
+_TEXT_SIZES = ("normal_v2", "normal", "heading", "notation")
 
 _SCENARIOS = ("short", "workflow", "tables", "longtext")
 _OUTCOMES = ("completed", "error", "aborted")
@@ -107,6 +108,14 @@ def _expect_token_str(v: Any, name: str, max_len: int = 32) -> str:
     if not valid:
         raise ValueError(f"{name} 必须是小写字母数字连字符下划线组成的短串")
     return str(v)
+
+
+def _expect_notice_text(v: Any, name: str) -> str:
+    if not isinstance(v, str) or not 1 <= len(v.strip()) <= 80:
+        raise ValueError(f"{name} 必须是 1~80 字符的非空字符串")
+    if any(ord(char) < 32 for char in v):
+        raise ValueError(f"{name} 不能包含控制字符")
+    return v.strip()
 
 
 def _expect_range(v: Any, name: str, lo: float, hi: float) -> float:
@@ -169,6 +178,8 @@ def _validate_chat_list(v: Any, name: str) -> list[str]:
 
 _STREAMING_SCALARS: dict[str, str] = {
     "enabled": "bool",
+    "completion_notice": "bool",
+    "completion_notice_text": "notice_text",
     "content_lang": "lang",
     "chat_types": "chat_types",
     "panel_expanded": "bool",
@@ -198,6 +209,8 @@ _GATEWAY_KEYS = {"enabled": "bool", "allow_chats": "chatlist"}
 def _validate_scalar(v: Any, name: str, kind: str) -> Any:
     if kind == "bool":
         return _expect_bool(v, name)
+    if kind == "notice_text":
+        return _expect_notice_text(v, name)
     if kind == "lang":
         return _expect_choice(v, name, _LANGS)
     if kind == "width":
@@ -211,7 +224,7 @@ def _validate_scalar(v: Any, name: str, kind: str) -> Any:
     if kind == "fields":
         return _validate_fields(v, name)
     if kind == "textsize":
-        return _expect_token_str(v, name)
+        return _expect_choice(v, name, _TEXT_SIZES)
     if kind == "dur":
         return _expect_range(v, name, 0, 86400)
     if kind == "dur600":
@@ -681,6 +694,8 @@ def collect_state(home: Path | None = None) -> dict[str, Any]:
         "content_lang": cfg.content_lang,
         "chat_types": sorted(chat) if chat is not None else None,
         "panel_expanded": cfg.panel_expanded,
+        "completion_notice": cfg.completion_notice,
+        "completion_notice_text": cfg.completion_notice_text,
         "width_mode": cfg.width_mode,
         "header": {"enabled": cfg.header_enabled, "min_duration": cfg.header_min_duration},
         "footer": {
