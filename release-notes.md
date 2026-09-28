@@ -15,9 +15,9 @@
 ### 📦 升级
 
 ```bash
-cd hermes-fry-cards && git pull
+cd ~/projects/hermes-fry-cards && git pull
 HERMES_PYTHON=~/.hermes/hermes-agent/venv/bin/python3
-$HERMES_PYTHON -m pip install -e .
+$HERMES_PYTHON -m pip install -U .
 ```
 
 > ✅ 纯 CSS 变量调整：**无需重跑 `uninstall` + `install`，无需重启网关**，更新包后浏览器强刷（Ctrl+F5）Studio 页面即可。
@@ -49,9 +49,9 @@ $HERMES_PYTHON -m pip install -e .
 ### 📦 升级
 
 ```bash
-cd hermes-fry-cards && git pull
+cd ~/projects/hermes-fry-cards && git pull
 HERMES_PYTHON=~/.hermes/hermes-agent/venv/bin/python3
-$HERMES_PYTHON -m pip install -e .
+$HERMES_PYTHON -m pip install -U .
 ```
 
 > ✅ 纯前端改动：**无需重跑 `uninstall` + `install`，无需重启网关**，更新包后浏览器强刷（Ctrl+F5）Studio 页面即可。
@@ -80,9 +80,9 @@ $HERMES_PYTHON -m pip install -e .
 ### 📦 升级
 
 ```bash
-cd hermes-fry-cards && git pull
+cd ~/projects/hermes-fry-cards && git pull
 HERMES_PYTHON=~/.hermes/hermes-agent/venv/bin/python3
-$HERMES_PYTHON -m pip install -e .
+$HERMES_PYTHON -m pip install -U .
 ```
 
 > ✅ 纯前端修复：**无需重跑 `uninstall` + `install`，无需重启网关**，更新包后浏览器强刷（Ctrl+F5）Studio 页面即可。
@@ -120,9 +120,9 @@ $HERMES_PYTHON -m pip install -e .
 ### 📦 升级
 
 ```bash
-cd hermes-fry-cards && git pull
+cd ~/projects/hermes-fry-cards && git pull
 HERMES_PYTHON=~/.hermes/hermes-agent/venv/bin/python3
-$HERMES_PYTHON -m pip install -e .
+$HERMES_PYTHON -m pip install -U .
 $HERMES_PYTHON -m hermes_fry_cards uninstall
 $HERMES_PYTHON -m hermes_fry_cards install
 hermes gateway restart
@@ -174,9 +174,9 @@ hermes gateway restart
 ### 📦 升级
 
 ```bash
-cd hermes-fry-cards && git pull
+cd ~/projects/hermes-fry-cards && git pull
 HERMES_PYTHON=~/.hermes/hermes-agent/venv/bin/python3
-$HERMES_PYTHON -m pip install -e .
+$HERMES_PYTHON -m pip install -U .
 $HERMES_PYTHON -m hermes_fry_cards uninstall
 $HERMES_PYTHON -m hermes_fry_cards install
 hermes gateway restart
@@ -223,9 +223,9 @@ hermes gateway restart
 ### 📦 升级
 
 ```bash
-cd hermes-fry-cards && git pull
+cd ~/projects/hermes-fry-cards && git pull
 HERMES_PYTHON=~/.hermes/hermes-agent/venv/bin/python3
-$HERMES_PYTHON -m pip install -e .
+$HERMES_PYTHON -m pip install -U .
 $HERMES_PYTHON -m hermes_fry_cards uninstall
 $HERMES_PYTHON -m hermes_fry_cards install
 hermes gateway restart
