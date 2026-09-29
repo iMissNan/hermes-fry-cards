@@ -1,6 +1,10 @@
 ## 🍟 hermes-fry-cards v0.4.5
 
-> 0.4.4 的纯黑主操作色对比过冲、观感生硬——本版柔化为**石墨蓝灰**并给激活元素加轻阴影，保留 CreditDaddy 的深色激活语言。纯 CSS 变量调整，无功能变化。
+> 0.4.4 的纯黑主操作色对比过冲、观感生硬——本版柔化为**石墨蓝灰**并给激活元素加轻阴影，保留 CreditDaddy 的深色激活语言；同版**包首发 PyPI**，`pip install hermes-fry-cards` 即可安装。纯 CSS 变量调整，无功能变化。
+
+### ✨ 新增
+
+- **包首发 PyPI**：[pypi.org/project/hermes-fry-cards](https://pypi.org/project/hermes-fry-cards) — `pip install hermes-fry-cards` 直接安装（升级加 `-U`）；装完仍需 `verify` → `install` 注入并重启网关
 
 ### 🎨 视觉
 
@@ -14,10 +18,25 @@
 
 ### 📦 升级
 
+**PyPI（本版起上架，推荐）**：
+
+```bash
+HERMES_PYTHON=~/.hermes/hermes-agent/venv/bin/python3
+$HERMES_PYTHON -m pip install -U hermes-fry-cards
+$HERMES_PYTHON -m hermes_fry_cards uninstall
+$HERMES_PYTHON -m hermes_fry_cards install
+hermes gateway restart
+```
+
+**源码方式**：
+
 ```bash
 cd ~/projects/hermes-fry-cards && git pull
 HERMES_PYTHON=~/.hermes/hermes-agent/venv/bin/python3
 $HERMES_PYTHON -m pip install -U .
+$HERMES_PYTHON -m hermes_fry_cards uninstall
+$HERMES_PYTHON -m hermes_fry_cards install
+hermes gateway restart
 ```
 
 > ✅ 纯 CSS 变量调整：**无需重跑 `uninstall` + `install`，无需重启网关**，更新包后浏览器强刷（Ctrl+F5）Studio 页面即可。

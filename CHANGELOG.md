@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.5] - 2026-09-29
 
+### 新增 / Added
+- **包首发 PyPI**：[pypi.org/project/hermes-fry-cards](https://pypi.org/project/hermes-fry-cards) —
+  支持 `pip install hermes-fry-cards` 直接安装（升级 `pip install -U hermes-fry-cards`），
+  安装后仍需 `verify` → `install` 注入并重启网关。
+
 ### 变更 / Changed
 - **主色柔化**：黑白主题的操作色由纯黑 `#1b1c1f` 调整为石墨蓝灰 `#39404a`（暗色下反白
   同步柔化为 `#e7e8ea`），激活 tab / 选中 chip / 主按钮增加同色系轻阴影，缓解高对比

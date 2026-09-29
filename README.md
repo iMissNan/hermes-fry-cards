@@ -75,7 +75,20 @@ hermes gateway restart
 > `curl -fsSL .../install.sh | FRY_REF=v0.4.5 bash`  
 > `curl -fsSL .../install.sh | HERMES_PYTHON=/path/to/python3 bash`
 
-### 方式二：从源码手动安装
+### 方式二：从 PyPI 安装
+
+```bash
+HERMES_PYTHON=~/.hermes/hermes-agent/venv/bin/python3
+
+$HERMES_PYTHON -m pip install hermes-fry-cards        # 升级：pip install -U hermes-fry-cards
+$HERMES_PYTHON -m hermes_fry_cards verify
+$HERMES_PYTHON -m hermes_fry_cards install
+hermes gateway restart
+```
+
+> 💡 PyPI 安装为 site-packages 常规包；升级后同样需要 `uninstall` + `install` 重注入（注入模板有变更时）。
+
+### 方式三：从源码手动安装
 
 ```bash
 git clone https://github.com/techysy/hermes-fry-cards.git
