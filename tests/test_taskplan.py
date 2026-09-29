@@ -71,3 +71,26 @@ def test_build_task_plan_panel_elements():
     assert "全量达成" in str(panel_done["header"])
     assert "3/3" in str(panel_done["header"])
 
+
+def test_controller_plan_interception():
+    import asyncio
+    from hermes_fry_cards.streaming.session import CardSession
+
+    loop = asyncio.new_event_loop()
+    try:
+        session = CardSession(message_id="msg_test_01", chat_id="chat_01", loop=loop)
+        assert session.task_plan is not None
+
+        # 模拟 update_plan 工具调用
+        tool_detail = '{"plan": [{"id": "1", "step": "查配置", "status": "completed"}, {"id": "2", "step": "改代码", "status": "in_progress"}, {"id": "3", "step": "跑验证", "status": "pending"}]}'
+        session.handle_plan_update(tool_detail)
+        assert session.task_plan.should_display()
+        assert session.task_plan.completed_count == 1
+
+        # 模拟子工具执行注脚联动
+        session.update_tool_sub_note("terminal", "cat /etc/nginx/nginx.conf")
+        assert "cat /etc/nginx" in session.task_plan.latest_sub_note
+    finally:
+        loop.close()
+
+

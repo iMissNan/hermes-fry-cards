@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from .flush import CARDKIT_MS, FlushController
 from .segments import Segment, SegmentState
+from .taskplan import TaskPlanTracker
 from .tooluse import ToolUseTracker
 from .unavailable_guard import UnavailableGuard
 
@@ -70,6 +71,7 @@ class CardSession:
         "state",
         "streaming_closed_seen",
         "synthetic",
+        "task_plan",
         "tool_panel_created",
         "tool_panel_estimate",
         "tool_use",
@@ -94,6 +96,7 @@ class CardSession:
         self.card_id: str | None = None
         self._completion_dispatched: bool = False  # CAS 防重锁，保证单会话封卡协程只调度一次
         self.tool_use = ToolUseTracker()
+        self.task_plan = TaskPlanTracker()
         self.tool_panel_estimate: int = 0  # 合并面板模式下工具面板当前的总元素估算
         self.flush = FlushController(throttle_ms=CARDKIT_MS, loop=loop)
         self.footer: dict[str, Any] = {}
@@ -144,3 +147,43 @@ class CardSession:
         if self.segment_state is None:
             return []
         return self.segment_state.segments[self.split_index:]
+
+    def handle_plan_update(self, raw_plan_json_or_dict: Any) -> bool:
+        """解析并更新任务计划 tracker."""
+        import json
+        if self.task_plan is None:
+            return False
+        data = raw_plan_json_or_dict
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except Exception:
+                return False
+        if not isinstance(data, dict):
+            return False
+        plan_list = data.get("plan")
+        if not isinstance(plan_list, list):
+            # 支持顶层直接是 steps 列表或者 {"steps": [...]}
+            plan_list = data.get("steps")
+        if not isinstance(plan_list, list):
+            return False
+        explanation = str(data.get("explanation", ""))
+        return self.task_plan.update_plan(plan_list, explanation=explanation)
+
+    def update_tool_sub_note(self, tool_name: str, detail: str = "") -> None:
+        """更新当前进行中步骤的子工具执行注脚."""
+        if self.task_plan is None:
+            return
+        summary = ""
+        if tool_name:
+            # 提炼命令/参数摘要
+            clean_detail = detail.strip().replace("\n", " ") if detail else ""
+            if len(clean_detail) > 40:
+                clean_detail = clean_detail[:37] + "..."
+            if clean_detail:
+                summary = f"{tool_name}: {clean_detail}"
+            else:
+                summary = f"{tool_name}"
+        if summary:
+            self.task_plan.set_active_sub_note(summary)
+

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..cardkit.builder import (
     LOADING_ELEMENT_ID,
+    TASK_PLAN_ELEMENT_ID,
     TOOL_PANEL_ELEMENT_ID,
     _fit_card_bytes,
     build_background_card,
@@ -38,6 +39,7 @@ from .segment_helper import (
     FOOTER_RESERVE,
     build_add_segment_action,
     build_reasoning_finalized_action,
+    build_task_plan_update_action,
     build_tool_update_action,
     cap_tool_steps,
     estimate_answer_elements,
@@ -128,6 +130,7 @@ class StreamingController:
             reply_to_message_id = session.anchor_id or session.message_id
             card = build_streaming_card_v2(
                 show_tool_use=self._cfg.show_tool_use,
+                task_plan=session.task_plan,
                 show_reasoning=False,
                 show_streaming_element=False,
                 header_enabled=self._cfg.header_enabled,
@@ -234,6 +237,18 @@ class StreamingController:
         new_el_total = 0  # 同一 flush 内新 segment 估计 + dirty segment 增量的累计
         # 合并面板追踪：多个 tool segment 共享同一个底部面板
         tool_panel_element_id: str | None = None
+
+        # 检查 task_plan 是否有更新需要 partial_update
+        if session.task_plan and session.task_plan.should_display():
+            if session.task_plan.dirty:
+                plan_act = build_task_plan_update_action(
+                    element_id=TASK_PLAN_ELEMENT_ID,
+                    tracker=session.task_plan,
+                )
+                if plan_act:
+                    actions.append(plan_act)
+                session.task_plan.dirty = False
+
 
         for i, seg in enumerate(segments):
             if i < session.split_index:
@@ -704,6 +719,7 @@ class StreamingController:
         seal_card = _fit_card_bytes(build_complete_card(
             segments=seal_segments,
             all_tool_steps=all_steps,
+            task_plan=session.task_plan,
             footer_data=session.footer,
             footer_fields=[],
             footer_show_label=False,
@@ -760,6 +776,7 @@ class StreamingController:
             )
             card = build_streaming_card_v2(
                 show_tool_use=need_tool_panel,
+                task_plan=session.task_plan,
                 show_reasoning=False,
                 show_streaming_element=False,
                 header_enabled=self._cfg.header_enabled,
@@ -983,6 +1000,7 @@ class StreamingController:
         card = build_complete_card(
             segments=active_segments,
             all_tool_steps=all_tool_steps,
+            task_plan=session.task_plan,
             footer_data=session.footer,
             is_error=is_error,
             is_aborted=is_aborted,

@@ -179,3 +179,27 @@ def build_tool_update_action(
             },
         },
     }
+
+
+def build_task_plan_update_action(
+    *,
+    element_id: str,
+    tracker: Any,
+) -> dict[str, Any] | None:
+    """构造 task plan panel 局部更新 action."""
+    from ..cardkit.builder import build_task_plan_panel
+    panel = build_task_plan_panel(tracker)
+    if panel is None:
+        return None
+    return {
+        "action": "partial_update_element",
+        "params": {
+            "element_id": element_id,
+            "partial_element": {
+                "elements": panel["elements"],
+                "header": panel["header"],
+                "expanded": panel["expanded"],
+            },
+        },
+    }
+

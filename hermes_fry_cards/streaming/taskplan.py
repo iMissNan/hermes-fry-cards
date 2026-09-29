@@ -41,6 +41,8 @@ class TaskPlanTracker:
         self.steps: list[PlanStep] = []
         self.explanation: str = ""
         self.latest_sub_note: str = ""
+        self.dirty: bool = False
+        self.created: bool = False
 
     def update_plan(self, raw_steps: list[dict[str, Any]], explanation: str = "") -> bool:
         if not isinstance(raw_steps, list):
@@ -59,10 +61,14 @@ class TaskPlanTracker:
             parsed.append(PlanStep(id=sid, step=title, status=st))
         self.steps = parsed
         self.explanation = explanation
+        self.dirty = True
         return True
 
     def set_active_sub_note(self, note: str) -> None:
-        self.latest_sub_note = note
+        if self.latest_sub_note != note:
+            self.latest_sub_note = note
+            self.dirty = True
+
 
     def should_display(self) -> bool:
         return len(self.steps) >= self.min_steps

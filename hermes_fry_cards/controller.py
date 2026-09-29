@@ -315,10 +315,21 @@ class StreamCardController(StreamingController):
         if session.segment_state is None:
             return False
 
+        # 拦截任务计划更新 (update_plan / ekko_studio_update_plan)
+        if "update_plan" in tool_name.lower():
+            if status in ("running", "started", "tool.started"):
+                session.handle_plan_update(detail)
+            else:
+                session.handle_plan_update(detail)
+        elif session.task_plan:
+            # 其他子工具调用：提取命令摘要作为进行中步骤的最新动态小注脚
+            session.update_tool_sub_note(tool_name, detail)
+
         if status in ("running", "started", "tool.started"):
             session.tool_use.record_start(tool_name, detail)
         else:
             is_error = status in ("error", "failed")
+
             session.tool_use.record_end(
                 tool_name,
                 error=detail if is_error else "",
