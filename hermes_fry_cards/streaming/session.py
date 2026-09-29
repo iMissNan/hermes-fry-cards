@@ -82,6 +82,7 @@ class CardSession:
         message_id: str,
         chat_id: str,
         loop: asyncio.AbstractEventLoop,
+        task_plan_config: dict[str, Any] | None = None,
     ) -> None:
         self.message_id = message_id
         self.anchor_id: str | None = None
@@ -96,7 +97,15 @@ class CardSession:
         self.card_id: str | None = None
         self._completion_dispatched: bool = False  # CAS 防重锁，保证单会话封卡协程只调度一次
         self.tool_use = ToolUseTracker()
-        self.task_plan = TaskPlanTracker()
+
+        tp_cfg = task_plan_config or {}
+        self.task_plan = TaskPlanTracker(
+            min_steps=tp_cfg.get("min_steps", 3),
+            default_collapsed=tp_cfg.get("default_collapsed", True),
+            auto_collapse_on_done=tp_cfg.get("auto_collapse_on_done", True),
+            show_sub_note=tp_cfg.get("show_sub_note", True),
+        ) if tp_cfg.get("enabled", True) else None
+
         self.tool_panel_estimate: int = 0  # 合并面板模式下工具面板当前的总元素估算
         self.flush = FlushController(throttle_ms=CARDKIT_MS, loop=loop)
         self.footer: dict[str, Any] = {}

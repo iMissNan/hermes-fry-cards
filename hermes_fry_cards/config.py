@@ -110,6 +110,44 @@ def _resolve_model_alias(entry: Any, now: datetime | None = None) -> str | None:
     return str(fallback) if fallback else None
 
 
+def load_task_plan_config(raw_cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    """读取 task_plan 配置段，并注入老板定案的默认值."""
+    defaults = {
+        "enabled": True,
+        "min_steps": 3,
+        "default_collapsed": True,
+        "auto_collapse_on_done": True,
+        "show_sub_note": True,
+    }
+    if not raw_cfg or not isinstance(raw_cfg, dict):
+        return defaults
+    sec = raw_cfg.get("task_plan")
+    if not isinstance(sec, dict):
+        # 兼容放在 streaming.task_plan 下
+        st = raw_cfg.get("streaming")
+        if isinstance(st, dict):
+            sec = st.get("task_plan")
+    if not isinstance(sec, dict):
+        return defaults
+
+    res = dict(defaults)
+    if "enabled" in sec:
+        res["enabled"] = bool(sec["enabled"])
+    if "min_steps" in sec:
+        try:
+            res["min_steps"] = int(sec["min_steps"])
+        except (ValueError, TypeError):
+            pass
+    if "default_collapsed" in sec:
+        res["default_collapsed"] = bool(sec["default_collapsed"])
+    if "auto_collapse_on_done" in sec:
+        res["auto_collapse_on_done"] = bool(sec["auto_collapse_on_done"])
+    if "show_sub_note" in sec:
+        res["show_sub_note"] = bool(sec["show_sub_note"])
+    return res
+
+
+
 class Config:
     """插件配置，惰性读取 Hermes 主配置."""
 
@@ -212,6 +250,11 @@ class Config:
             if isinstance(feishu, dict) and "show_context" in feishu:
                 return bool(feishu["show_context"])
         return bool(display.get("show_context", True))
+
+    @property
+    def task_plan(self) -> dict[str, Any]:
+        """任务计划配置字典."""
+        return load_task_plan_config(self._reload())
 
     @property
     def max_reasoning_panels(self) -> int:

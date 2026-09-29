@@ -236,7 +236,7 @@ class StreamCardController(StreamingController):
         if loop is None:
             _logger.warning("no event loop available, skipping: msg=%s", message_id[:12])
             return
-        session = CardSession(message_id, chat_id, loop)
+        session = CardSession(message_id, chat_id, loop, task_plan_config=self._cfg.task_plan)
         session.synthetic = synthetic
         self._register_session(session, anchor_id=anchor_id, session_key=session_key)
         _logger.info(
@@ -595,7 +595,7 @@ class StreamCardController(StreamingController):
             loop = self._get_loop()
             if loop is not None and new_card_allowed:
                 reply_anchor_id = anchor_id if anchor_id and anchor_id != new_message_id else None
-                session = CardSession(new_message_id, chat_id, loop)
+                session = CardSession(new_message_id, chat_id, loop, task_plan_config=self._cfg.task_plan)
                 self._register_session(session, anchor_id=reply_anchor_id, session_key=session_key)
                 _logger.info(
                     "session_created: msg=%s chat=%s anchor=%s key=%s (interrupt redirect)",

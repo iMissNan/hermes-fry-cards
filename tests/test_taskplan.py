@@ -94,3 +94,30 @@ def test_controller_plan_interception():
         loop.close()
 
 
+def test_task_plan_config_defaults():
+    from hermes_fry_cards.config import load_task_plan_config
+
+    cfg = load_task_plan_config({})
+    assert cfg["enabled"] is True
+    assert cfg["min_steps"] == 3
+    assert cfg["default_collapsed"] is True
+    assert cfg["auto_collapse_on_done"] is True
+    assert cfg["show_sub_note"] is True
+
+    custom = load_task_plan_config({
+        "task_plan": {
+            "enabled": False,
+            "min_steps": 5,
+            "default_collapsed": False,
+            "auto_collapse_on_done": False,
+            "show_sub_note": False,
+        }
+    })
+    assert custom["enabled"] is False
+    assert custom["min_steps"] == 5
+    assert custom["default_collapsed"] is False
+    assert custom["auto_collapse_on_done"] is False
+    assert custom["show_sub_note"] is False
+
+
+
