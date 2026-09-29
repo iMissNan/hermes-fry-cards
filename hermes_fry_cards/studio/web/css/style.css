@@ -67,6 +67,7 @@ body {
   text-decoration: none; transition: border-color .15s, transform .15s;
 }
 .icon-link:hover, .icon-btn:hover { border-color: var(--border-strong); transform: translateY(-1px); }
+.icon-link svg, .icon-btn svg, .op-btn svg { display: block; }
 
 /* ---------- 胶囊导航（CreditDaddy tab 条） ---------- */
 .tabs {
@@ -132,7 +133,7 @@ legend { font-weight: 700; padding: 0 0 6px; font-size: 14px; color: var(--text)
 }
 .chip:hover { border-color: var(--border-strong); color: var(--text); }
 .chip.on { background: var(--ink); border-color: var(--ink); color: var(--bg); box-shadow: 0 1px 3px var(--ink-soft); }
-.chip.dragging { opacity: .35; }
+
 
 .actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 .btn {
@@ -146,6 +147,21 @@ legend { font-weight: 700; padding: 0 0 6px; font-size: 14px; color: var(--text)
 .btn.danger { background: var(--red); border-color: var(--red); color: #fff; }
 .btn.danger:hover { filter: brightness(.95); }
 .btn.ghost { background: transparent; }
+
+/* ---------- 字段列表（复选框 + ↑↓ 调序） ---------- */
+.field-list { display: flex; flex-direction: column; gap: 2px; }
+.field-row { display: flex; align-items: center; gap: 10px; padding: 3px 8px; border-radius: 8px; }
+.field-row:hover { background: var(--bg-soft); }
+.field-row input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--ink); margin: 0; }
+.field-name { flex: 1; font-size: 13px; }
+.field-ops { display: flex; gap: 4px; }
+.op-btn {
+  border: 1px solid var(--border); background: var(--card); color: var(--text-2);
+  border-radius: 6px; width: 26px; height: 24px; cursor: pointer;
+  font-size: 12px; line-height: 1; display: inline-flex; align-items: center; justify-content: center;
+}
+.op-btn:hover { border-color: var(--border-strong); color: var(--text); }
+.field-list.locked { opacity: .55; pointer-events: none; }
 
 /* ---------- 预览 ---------- */
 .preview-controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-bottom: 14px; }

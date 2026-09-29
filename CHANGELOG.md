@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.7] - 2026-09-29
+
+### 变更 / Changed
+- **Studio 图标全面 SVG 化**：字段列表 ↑↓ 调序按钮改为 SVG chevron，主题切换按钮
+  （月亮 / 太阳）与 GitHub 顶栏图标同步替换文字/emoji——随主题色 `currentColor` 渲染，
+  暗色下不再出现彩色 emoji 与界面割裂；操作按钮补 `aria-label`。
+
+---
+
 ## [0.4.6] - 2026-09-29
 
 ### 新增 / Added

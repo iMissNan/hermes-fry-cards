@@ -6,10 +6,12 @@
   var esc = window.FryPreview.escapeHtml;
 
   /* ---------- 主题（亮 / 暗，localStorage 记忆） ---------- */
+  var ICON_MOON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+  var ICON_SUN = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.4"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M19.4 4.6l-1.8 1.8M6.4 17.6l-1.8 1.8"/></svg>';
   var themeBtn = document.getElementById("theme-toggle");
   function applyTheme(t) {
     document.documentElement.setAttribute("data-theme", t);
-    themeBtn.textContent = t === "dark" ? "☀️" : "🌙";
+    themeBtn.innerHTML = t === "dark" ? ICON_SUN : ICON_MOON;
     try { localStorage.setItem("fry-theme", t); } catch (e) { /* 隐私模式忽略 */ }
   }
   var savedTheme = "light";
@@ -20,62 +22,43 @@
     applyTheme(cur === "dark" ? "light" : "dark");
   });
 
-  /* ---------- 字段 chips 拖拽排序（保存按容器内实际顺序） ---------- */
-  function enableChipDrag(container) {
-    var dragged = null;
-    container.addEventListener("dragstart", function (e) {
-      var chip = e.target.closest(".chip");
-      if (!chip || chip.disabled) { e.preventDefault(); return; }
-      dragged = chip;
-      requestAnimationFrame(function () { chip.classList.add("dragging"); });
-      e.dataTransfer.effectAllowed = "move";
-      try { e.dataTransfer.setData("text/plain", chip.dataset.field); } catch (err) { /* IE 兼容忽略 */ }
-    });
-    container.addEventListener("dragover", function (e) {
-      if (!dragged) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "move";
-      var others = Array.prototype.filter.call(
-        container.querySelectorAll(".chip"),
-        function (c) { return c !== dragged; }
-      );
-      var next = null;
-      for (var i = 0; i < others.length; i++) {
-        var r = others[i].getBoundingClientRect();
-        if (e.clientX < r.left + r.width / 2) { next = others[i]; break; }
-      }
-      if (next) container.insertBefore(dragged, next);
-      else container.appendChild(dragged);
-    });
-    container.addEventListener("drop", function (e) { e.preventDefault(); });
-    container.addEventListener("dragend", function () {
-      if (dragged) dragged.classList.remove("dragging");
-      dragged = null;
-    });
+  /* ---------- 字段列表（勾选启用，↑↓ 调整顺序） ---------- */
+  function moveField(containerId, field, dir) {
+    var box = document.getElementById(containerId);
+    var rows = Array.prototype.slice.call(box.querySelectorAll(".field-row"));
+    var idx = -1;
+    rows.forEach(function (r, i) { if (r.dataset.field === field) idx = i; });
+    var to = idx + dir;
+    if (idx < 0 || to < 0 || to >= rows.length) return;
+    var ref = rows[to];
+    box.removeChild(rows[idx]);
+    if (dir < 0) box.insertBefore(rows[idx], ref);
+    else box.insertBefore(rows[idx], ref.nextSibling);
   }
-  ["f-footer-fields", "f-panel-fields"].forEach(function (id) {
-    var box = document.getElementById(id);
-    if (!box) return;
-    enableChipDrag(box);
-    box.querySelectorAll(".chip").forEach(function (c) { c.draggable = true; });
+  document.querySelectorAll(".field-list").forEach(function (box) {
+    box.addEventListener("click", function (e) {
+      var btn = e.target.closest(".op-btn");
+      if (!btn || box.classList.contains("locked")) return;
+      var row = btn.closest(".field-row");
+      moveField(box.id, row.dataset.field, parseInt(btn.dataset.move, 10));
+    });
   });
 
-  /* 按 order 重排 chips（on 的按已保存顺序，未选字段保持原相对顺序跟在后面） */
-  function orderChips(container, order) {
-    if (!container) return;
-    var chips = Array.prototype.slice.call(container.querySelectorAll(".chip"));
-    if (!order || !order.length) return;
+  /* 按 order 重排字段行（已保存顺序在前，未选字段保持相对顺序跟在后面） */
+  function orderRows(container, order) {
+    if (!container || !order || !order.length) return;
+    var rows = Array.prototype.slice.call(container.querySelectorAll(".field-row"));
     var byField = {};
-    chips.forEach(function (c) { byField[c.dataset.field] = c; });
+    rows.forEach(function (r) { byField[r.dataset.field] = r; });
     var seen = {};
     var result = [];
     order.forEach(function (f) {
       if (byField[f] && !seen[f]) { result.push(byField[f]); seen[f] = true; }
     });
-    chips.forEach(function (c) {
-      if (!seen[c.dataset.field]) { result.push(c); seen[c.dataset.field] = true; }
+    rows.forEach(function (r) {
+      if (!seen[r.dataset.field]) { result.push(r); seen[r.dataset.field] = true; }
     });
-    result.forEach(function (c) { container.appendChild(c); });
+    result.forEach(function (r) { container.appendChild(r); });
   }
 
   /* ---------- tabs ---------- */
@@ -163,11 +146,12 @@
 
     __origFields = s.footer.fields;
     var firstRow = (s.footer.fields && s.footer.fields[0]) || [];
-    if (!(s.footer.fields && s.footer.fields.length > 1)) {
-      orderChips(document.getElementById("f-footer-fields"), firstRow);
-    }
-    document.querySelectorAll("#f-footer-fields .chip").forEach(function (c) {
-      c.classList.toggle("on", firstRow.indexOf(c.dataset.field) >= 0);
+    var multi = !!(s.footer.fields && s.footer.fields.length > 1);
+    var footerBox = document.getElementById("f-footer-fields");
+    footerBox.classList.toggle("locked", multi);
+    if (!multi) orderRows(footerBox, firstRow);
+    footerBox.querySelectorAll(".field-row").forEach(function (r) {
+      r.querySelector("input").checked = firstRow.indexOf(r.dataset.field) >= 0;
     });
     var multi = __origFields && __origFields.length > 1;
     document.querySelectorAll("#f-footer-fields .chip").forEach(function (c) {
@@ -189,9 +173,9 @@
     setVal("f-context-mode", d.context_display_mode);
 
     var pf = d.panel_fields || [];
-    orderChips(document.getElementById("f-panel-fields"), pf);
-    document.querySelectorAll("#f-panel-fields .chip").forEach(function (c) {
-      c.classList.toggle("on", pf.indexOf(c.dataset.field) >= 0);
+    orderRows(document.getElementById("f-panel-fields"), pf);
+    document.querySelectorAll("#f-panel-fields .field-row").forEach(function (r) {
+      r.querySelector("input").checked = pf.indexOf(r.dataset.field) >= 0;
     });
 
     var gsb = ((state.gateway || {}).group_security_boundary) || {};
@@ -221,18 +205,18 @@
       .map(function (s) { return s.trim(); })
       .filter(Boolean);
 
-    // 按容器内实际顺序（含拖拽结果）收集勾选字段
+    // 按列表内实际顺序（含 ↑↓ 调整结果）收集勾选字段
     var picked = [];
-    document.querySelectorAll("#f-footer-fields .chip").forEach(function (c) {
-      if (c.classList.contains("on")) picked.push(c.dataset.field);
+    document.querySelectorAll("#f-footer-fields .field-row").forEach(function (r) {
+      if (r.querySelector("input").checked) picked.push(r.dataset.field);
     });
     var fields;
     if (__origFields && __origFields.length > 1) fields = __origFields; // 多行原样保留
     else fields = picked.length ? [picked] : [];
 
     var pickedPanel = [];
-    document.querySelectorAll("#f-panel-fields .chip").forEach(function (c) {
-      if (c.classList.contains("on")) pickedPanel.push(c.dataset.field);
+    document.querySelectorAll("#f-panel-fields .field-row").forEach(function (r) {
+      if (r.querySelector("input").checked) pickedPanel.push(r.dataset.field);
     });
     var panelFields = pickedPanel;
 
@@ -286,8 +270,12 @@
     return data;
   }
 
-  $("#config-form").addEventListener("submit", async function (e) {
-    e.preventDefault();
+  $("#btn-reload").addEventListener("click", function () {
+    loadState().then(function () { toast("已重新读取磁盘配置", ""); })
+      .catch(function (e) { toast("读取失败：" + e.message, "err"); });
+  });
+
+  async function saveConfig() {
     var btn = $("#btn-save");
     btn.disabled = true;
     try {
@@ -308,30 +296,29 @@
       toast(parts.length ? "已保存：" + parts.join("；") : "无配置变化", "ok");
       await loadState();
       await loadAliases();
+      return true;
     } catch (err) {
       toast("保存失败：" + err.message, "err");
+      return false;
     } finally {
       btn.disabled = false;
     }
+  }
+
+  $("#config-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    saveConfig();
   });
 
-  $("#btn-reload").addEventListener("click", function () {
-    loadState().then(function () { toast("已重新读取磁盘配置", ""); })
-      .catch(function (e) { toast("读取失败：" + e.message, "err"); });
-  });
-
-  document.querySelectorAll("#f-footer-fields .chip").forEach(function (c) {
-    c.addEventListener("click", function () {
-      if (c.disabled) return;
-      c.classList.toggle("on");
-    });
-  });
-
-  document.querySelectorAll("#f-panel-fields .chip").forEach(function (c) {
-    c.addEventListener("click", function () {
-      if (c.disabled) return;
-      c.classList.toggle("on");
-    });
+  /* 保存并预览：落盘后切到预览页签直接渲染效果 */
+  $("#btn-save-preview").addEventListener("click", async function () {
+    var btn = this;
+    btn.disabled = true;
+    var ok = await saveConfig();
+    btn.disabled = false;
+    if (!ok) return;
+    document.querySelector('.tab[data-tab="preview"]').click();
+    $("#btn-render").click();
   });
 
   /* ---------- 预览 ---------- */

@@ -1,3 +1,49 @@
+## 🍟 hermes-fry-cards v0.4.7
+
+> Studio 图标全面 **SVG 化**：字段调序箭头（↑↓）、主题切换（月亮/太阳）、GitHub 顶栏图标
+> 全部替换为内联 SVG，随主题色渲染，暗色下不再出现彩色 emoji 割裂感。纯前端改动。
+
+### 🎨 视觉
+
+- 字段列表 ↑↓ 调序按钮 → SVG chevron（`stroke: currentColor`，双主题自动适配）
+- 主题切换按钮月亮 / 太阳 → SVG（`applyTheme` 动态切换内联 SVG）
+- GitHub 顶栏 ⭐ → octocat SVG；操作按钮补 `aria-label` 无障碍标签
+
+### ✅ 验证
+
+浏览器亮 / 暗截图核对 SVG 渲染与箭头功能（调序 / 主题切换 / 图标随主题变色）。
+
+### 📦 升级
+
+**PyPI（推荐）**：
+
+```bash
+HERMES_PYTHON=~/.hermes/hermes-agent/venv/bin/python3
+$HERMES_PYTHON -m pip install -U hermes-fry-cards
+$HERMES_PYTHON -m hermes_fry_cards uninstall
+$HERMES_PYTHON -m hermes_fry_cards install
+hermes gateway restart
+```
+
+**源码方式**：
+
+```bash
+cd ~/projects/hermes-fry-cards && git pull
+HERMES_PYTHON=~/.hermes/hermes-agent/venv/bin/python3
+$HERMES_PYTHON -m pip install -U .
+$HERMES_PYTHON -m hermes_fry_cards uninstall
+$HERMES_PYTHON -m hermes_fry_cards install
+hermes gateway restart
+```
+
+> ✅ 纯前端改动：**无需重跑 `uninstall` + `install`，无需重启网关**，更新包后浏览器强刷（Ctrl+F5）Studio 页面即可。
+
+---
+
+完整明细见 [CHANGELOG.md](https://github.com/techysy/hermes-fry-cards/blob/main/CHANGELOG.md)。
+
+**Full Changelog**: [v0.4.6...v0.4.7](https://github.com/techysy/hermes-fry-cards/compare/v0.4.6...v0.4.7)
+
 ## 🍟 hermes-fry-cards v0.4.6
 
 > footer 与统一面板的**字段 chips 支持拖动排序**：按住拖到目标位置松手即可，保存按拖拽后的顺序写入配置，重新打开 Studio 按已保存顺序回填。纯前端改动。
