@@ -120,4 +120,42 @@ def test_task_plan_config_defaults():
     assert custom["show_sub_note"] is False
 
 
+def test_card_structure_with_task_plan():
+    """验证完整的流式与完成态卡片 elements 开头包含任务计划组件."""
+    from hermes_fry_cards.cardkit.builder import (
+        TASK_PLAN_ELEMENT_ID,
+        build_complete_card,
+        build_streaming_card_v2,
+    )
+    from hermes_fry_cards.streaming.segments import Segment, SegmentType
+
+    tracker = TaskPlanTracker(min_steps=3, default_collapsed=True)
+    tracker.update_plan([
+        {"id": "1", "step": "步骤一", "status": "completed"},
+        {"id": "2", "step": "步骤二", "status": "in_progress"},
+        {"id": "3", "step": "步骤三", "status": "pending"},
+    ])
+
+    # 流式卡片
+    stream_card = build_streaming_card_v2(task_plan=tracker)
+    elements = stream_card["body"]["elements"]
+    assert len(elements) > 0
+    assert elements[0].get("element_id") == TASK_PLAN_ELEMENT_ID
+    assert elements[0]["tag"] == "collapsible_panel"
+
+    # 完成态卡片
+    seg = Segment(SegmentType.ANSWER, "answer_0")
+    seg.text = "任务执行完毕！"
+    complete_card = build_complete_card(
+        segments=[seg],
+        all_tool_steps=[],
+        task_plan=tracker,
+    )
+    c_elements = complete_card["body"]["elements"]
+    assert len(c_elements) > 0
+    assert c_elements[0].get("element_id") == TASK_PLAN_ELEMENT_ID
+    assert c_elements[0]["tag"] == "collapsible_panel"
+
+
+
 
