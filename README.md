@@ -72,7 +72,7 @@ hermes gateway restart
 ```
 
 > 💡 可通过环境变量指定特定版本或解释器：  
-> `curl -fsSL .../install.sh | FRY_REF=v0.4.5 bash`  
+> `curl -fsSL .../install.sh | FRY_REF=v0.4.6 bash`  
 > `curl -fsSL .../install.sh | HERMES_PYTHON=/path/to/python3 bash`
 
 ### 方式二：从 PyPI 安装

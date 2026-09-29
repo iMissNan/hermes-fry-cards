@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.6] - 2026-09-29
+
+### 新增 / Added
+- **Studio 字段 chips 拖动排序**：footer 与统一面板两组字段 chips 支持按住拖动调整顺序
+  （原生 HTML5 Drag & Drop，无依赖）；保存按容器内实际顺序写入 `streaming.footer.fields` /
+  `display.platforms.feishu.panel_fields`（替代原先固定 FIELD_ORDER 排序）；重新打开 Studio
+  时按已保存顺序回填重排 chips（未选字段保持相对顺序跟在后面）。多行 fields 配置下 chips
+  仍整体禁用（不可点也不可拖）。
+
+---
+
 ## [0.4.5] - 2026-09-29
 
 ### 新增 / Added

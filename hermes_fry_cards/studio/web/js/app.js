@@ -2,8 +2,6 @@
 (function () {
   "use strict";
 
-  var FIELD_ORDER = ["status", "elapsed", "speed", "tokens", "cache", "context", "model"];
-  var PANEL_FIELD_ORDER = ["model", "reasoning", "tools", "context", "elapsed", "speed", "cache", "tokens", "status"];
   var $ = function (sel) { return document.querySelector(sel); };
   var esc = window.FryPreview.escapeHtml;
 
@@ -21,6 +19,64 @@
     var cur = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
     applyTheme(cur === "dark" ? "light" : "dark");
   });
+
+  /* ---------- 字段 chips 拖拽排序（保存按容器内实际顺序） ---------- */
+  function enableChipDrag(container) {
+    var dragged = null;
+    container.addEventListener("dragstart", function (e) {
+      var chip = e.target.closest(".chip");
+      if (!chip || chip.disabled) { e.preventDefault(); return; }
+      dragged = chip;
+      requestAnimationFrame(function () { chip.classList.add("dragging"); });
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", chip.dataset.field); } catch (err) { /* IE 兼容忽略 */ }
+    });
+    container.addEventListener("dragover", function (e) {
+      if (!dragged) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      var others = Array.prototype.filter.call(
+        container.querySelectorAll(".chip"),
+        function (c) { return c !== dragged; }
+      );
+      var next = null;
+      for (var i = 0; i < others.length; i++) {
+        var r = others[i].getBoundingClientRect();
+        if (e.clientX < r.left + r.width / 2) { next = others[i]; break; }
+      }
+      if (next) container.insertBefore(dragged, next);
+      else container.appendChild(dragged);
+    });
+    container.addEventListener("drop", function (e) { e.preventDefault(); });
+    container.addEventListener("dragend", function () {
+      if (dragged) dragged.classList.remove("dragging");
+      dragged = null;
+    });
+  }
+  ["f-footer-fields", "f-panel-fields"].forEach(function (id) {
+    var box = document.getElementById(id);
+    if (!box) return;
+    enableChipDrag(box);
+    box.querySelectorAll(".chip").forEach(function (c) { c.draggable = true; });
+  });
+
+  /* 按 order 重排 chips（on 的按已保存顺序，未选字段保持原相对顺序跟在后面） */
+  function orderChips(container, order) {
+    if (!container) return;
+    var chips = Array.prototype.slice.call(container.querySelectorAll(".chip"));
+    if (!order || !order.length) return;
+    var byField = {};
+    chips.forEach(function (c) { byField[c.dataset.field] = c; });
+    var seen = {};
+    var result = [];
+    order.forEach(function (f) {
+      if (byField[f] && !seen[f]) { result.push(byField[f]); seen[f] = true; }
+    });
+    chips.forEach(function (c) {
+      if (!seen[c.dataset.field]) { result.push(c); seen[c.dataset.field] = true; }
+    });
+    result.forEach(function (c) { container.appendChild(c); });
+  }
 
   /* ---------- tabs ---------- */
   document.getElementById("tabs").addEventListener("click", function (e) {
@@ -107,6 +163,9 @@
 
     __origFields = s.footer.fields;
     var firstRow = (s.footer.fields && s.footer.fields[0]) || [];
+    if (!(s.footer.fields && s.footer.fields.length > 1)) {
+      orderChips(document.getElementById("f-footer-fields"), firstRow);
+    }
     document.querySelectorAll("#f-footer-fields .chip").forEach(function (c) {
       c.classList.toggle("on", firstRow.indexOf(c.dataset.field) >= 0);
     });
@@ -130,6 +189,7 @@
     setVal("f-context-mode", d.context_display_mode);
 
     var pf = d.panel_fields || [];
+    orderChips(document.getElementById("f-panel-fields"), pf);
     document.querySelectorAll("#f-panel-fields .chip").forEach(function (c) {
       c.classList.toggle("on", pf.indexOf(c.dataset.field) >= 0);
     });
@@ -161,20 +221,20 @@
       .map(function (s) { return s.trim(); })
       .filter(Boolean);
 
+    // 按容器内实际顺序（含拖拽结果）收集勾选字段
     var picked = [];
-    document.querySelectorAll("#f-footer-fields .chip.on").forEach(function (c) {
-      picked.push(c.dataset.field);
+    document.querySelectorAll("#f-footer-fields .chip").forEach(function (c) {
+      if (c.classList.contains("on")) picked.push(c.dataset.field);
     });
-    var ordered = FIELD_ORDER.filter(function (f) { return picked.indexOf(f) >= 0; });
     var fields;
     if (__origFields && __origFields.length > 1) fields = __origFields; // 多行原样保留
-    else fields = ordered.length ? [ordered] : [];
+    else fields = picked.length ? [picked] : [];
 
     var pickedPanel = [];
-    document.querySelectorAll("#f-panel-fields .chip.on").forEach(function (c) {
-      pickedPanel.push(c.dataset.field);
+    document.querySelectorAll("#f-panel-fields .chip").forEach(function (c) {
+      if (c.classList.contains("on")) pickedPanel.push(c.dataset.field);
     });
-    var panelFields = PANEL_FIELD_ORDER.filter(function (f) { return pickedPanel.indexOf(f) >= 0; });
+    var panelFields = pickedPanel;
 
     return {
       streaming: {

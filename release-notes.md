@@ -1,3 +1,50 @@
+## 🍟 hermes-fry-cards v0.4.6
+
+> footer 与统一面板的**字段 chips 支持拖动排序**：按住拖到目标位置松手即可，保存按拖拽后的顺序写入配置，重新打开 Studio 按已保存顺序回填。纯前端改动。
+
+### ✨ 新增
+
+- **字段 chips 拖动排序**（footer + 统一面板两组）
+  - 原生 HTML5 Drag & Drop，无任何依赖；拖动中半透明占位，松手即落位
+  - 保存按容器内实际顺序写入 `streaming.footer.fields` / `display.platforms.feishu.panel_fields`（替代原先固定字段表排序——此前只能勾选，顺序不可调）
+  - 重新打开 Studio 按已保存顺序回填重排 chips，未选字段保持相对顺序跟在后面
+  - 多行 fields 配置下 chips 仍整体禁用（不可点也不可拖）
+
+### ✅ 验证
+
+浏览器端到端：拖拽 DOM 重排 → 保存 → config.yaml 字段顺序断言一致 → 刷新回填重排，footer 与面板两组全通过。
+
+### 📦 升级
+
+**PyPI（推荐）**：
+
+```bash
+HERMES_PYTHON=~/.hermes/hermes-agent/venv/bin/python3
+$HERMES_PYTHON -m pip install -U hermes-fry-cards
+$HERMES_PYTHON -m hermes_fry_cards uninstall
+$HERMES_PYTHON -m hermes_fry_cards install
+hermes gateway restart
+```
+
+**源码方式**：
+
+```bash
+cd ~/projects/hermes-fry-cards && git pull
+HERMES_PYTHON=~/.hermes/hermes-agent/venv/bin/python3
+$HERMES_PYTHON -m pip install -U .
+$HERMES_PYTHON -m hermes_fry_cards uninstall
+$HERMES_PYTHON -m hermes_fry_cards install
+hermes gateway restart
+```
+
+> ✅ 纯前端改动：**无需重跑 `uninstall` + `install`，无需重启网关**，更新包后浏览器强刷（Ctrl+F5）Studio 页面即可。
+
+---
+
+完整明细见 [CHANGELOG.md](https://github.com/techysy/hermes-fry-cards/blob/main/CHANGELOG.md)。
+
+**Full Changelog**: [v0.4.5...v0.4.6](https://github.com/techysy/hermes-fry-cards/compare/v0.4.5...v0.4.6)
+
 ## 🍟 hermes-fry-cards v0.4.5
 
 > 0.4.4 的纯黑主操作色对比过冲、观感生硬——本版柔化为**石墨蓝灰**并给激活元素加轻阴影，保留 CreditDaddy 的深色激活语言；同版**包首发 PyPI**，`pip install hermes-fry-cards` 即可安装。纯 CSS 变量调整，无功能变化。
