@@ -21,6 +21,7 @@ STREAMING_ELEMENT_ID = "streaming_content"
 REASONING_ELEMENT_ID = "reasoning_content"
 REASONING_TEXT_ELEMENT_ID = "reasoning_text"
 TOOL_PANEL_ELEMENT_ID = "tool_panel"
+TASK_PLAN_ELEMENT_ID = "task_plan_panel"
 LOADING_ELEMENT_ID = "loading_icon"
 _LOADING_ELEMENT_ID = LOADING_ELEMENT_ID  # 兼容旧私有引用
 _LOADING_IMG_KEY = "img_v3_02vb_496bec09-4b43-4773-ad6b-0cdd103cd2bg"
@@ -335,6 +336,56 @@ def _collapsible_panel(
         "padding": "8px 8px 8px 8px",
         "elements": elements,
     }
+
+
+def build_task_plan_panel(tracker: Any) -> dict[str, Any] | None:
+    """构建任务计划卡片组件 (CardKit 2.0 collapsible_panel).
+
+    置于卡片顶部（Header 正下方），对标 Studio update_plan 原生体验。
+    """
+    if tracker is None or not tracker.should_display():
+        return None
+
+    # 完工状态收拢判定
+    if tracker.is_all_completed:
+        expanded = False if tracker.auto_collapse_on_done else not tracker.default_collapsed
+        title_text = f"✅ 任务全量达成 ({tracker.completed_count}/{tracker.total_count})"
+    else:
+        expanded = not tracker.default_collapsed
+        title_text = f"📋 任务计划 ({tracker.completed_count}/{tracker.total_count} · 进行中)"
+
+    lines = []
+    for s in tracker.steps:
+        st_val = s.status.value if hasattr(s.status, "value") else str(s.status)
+        if st_val == "completed":
+            lines.append(f"✅ **{s.step}**")
+        elif st_val == "in_progress":
+            lines.append(f"🔄 **{s.step}**")
+            if tracker.show_sub_note and tracker.latest_sub_note:
+                lines.append(f"   <font color='grey'>└─ {tracker.latest_sub_note}</font>")
+        else:
+            lines.append(f"⏳ <font color='grey'>{s.step}</font>")
+
+    content_md = "\n".join(lines)
+
+    panel = _collapsible_panel(
+        expanded=expanded,
+        title_el={
+            "tag": "plain_text",
+            "content": title_text,
+            "text_size": "bold_v2",
+        },
+        elements=[{
+            "tag": "markdown",
+            "content": content_md,
+            "text_size": "normal_v2",
+            "margin": "0px 0px 0px 0px",
+        }],
+        vertical_spacing="4px",
+    )
+    panel["element_id"] = TASK_PLAN_ELEMENT_ID
+    return panel
+
 
 
 def _streaming_element(
@@ -784,6 +835,7 @@ def build_streaming_tool_use_pending_panel() -> dict[str, Any]:
 def build_streaming_card_v2(
     *,
     tool_steps: list[ToolDisplayStep] | None = None,
+    task_plan: Any = None,
     elapsed_ms: float = 0,
     show_tool_use: bool = True,
     show_reasoning: bool = False,
@@ -795,10 +847,15 @@ def build_streaming_card_v2(
     """CardKit 2.0 流式占位卡片 — 工具面板合并到底部."""
     elements: list[dict] = []
 
+    plan_panel = build_task_plan_panel(task_plan)
+    if plan_panel is not None:
+        elements.append(plan_panel)
+
     if show_reasoning:
         elements.append(
             _build_reasoning_panel(" ", expanded=True, element_id=REASONING_ELEMENT_ID)
         )
+
 
     if show_streaming_element:
         elements.append(_streaming_element(text_size=text_size))
@@ -839,6 +896,7 @@ def build_complete_card(
     *,
     segments: list[Segment],
     all_tool_steps: list[ToolDisplayStep],
+    task_plan: Any = None,
     footer_data: dict | None = None,
     is_error: bool = False,
     is_aborted: bool = False,
@@ -858,7 +916,13 @@ def build_complete_card(
     💭 思考1 → 🔧 工具组1 → 💭 思考2 → 🔧 工具组2 …（对齐工作流时间线）。
     """
     elements: list[dict] = []
+
+    plan_panel = build_task_plan_panel(task_plan)
+    if plan_panel is not None:
+        elements.append(plan_panel)
+
     has_answer = False
+
     # 收集所有 reasoning rounds + tool steps，合并成一个底部统一面板
     reasoning_rounds: list[dict] = []
     tool_steps_total: list[ToolDisplayStep] = []
