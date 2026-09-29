@@ -154,7 +154,54 @@ def test_card_structure_with_task_plan():
     c_elements = complete_card["body"]["elements"]
     assert len(c_elements) > 0
     assert c_elements[0].get("element_id") == TASK_PLAN_ELEMENT_ID
-    assert c_elements[0]["tag"] == "collapsible_panel"
+    assert complete_card["body"]["elements"][0]["tag"] == "collapsible_panel"
+
+
+def test_task_plan_auto_synthesis_from_tool_use():
+    """验证当模型未显式调用 update_plan 时，底层自动从工具流聚合成任务看板."""
+    tracker = TaskPlanTracker(min_steps=3, default_collapsed=True)
+    assert not tracker.should_display()
+
+    # 1. 模拟调用了 2 个工具（未达门槛 3 步） -> 依然不显示
+    steps_2 = [
+        {"name": "terminal", "title": "Terminal (1.2 s)", "status": "completed"},
+        {"name": "patch", "title": "Patch (0.3 s)", "status": "running"},
+    ]
+    tracker.sync_from_tool_use(steps_2)
+    assert not tracker.should_display()
+    assert tracker.total_count == 0
+
+    # 2. 模拟调用了第 3 个工具（达到门槛） -> 自动升格为任务计划看板！
+    steps_3 = [
+        {"name": "terminal", "title": "Terminal (1.2 s)", "status": "completed"},
+        {"name": "patch", "title": "Patch (0.3 s)", "status": "completed"},
+        {"name": "terminal", "title": "Terminal (0.8 s)", "status": "running"},
+    ]
+    tracker.sync_from_tool_use(steps_3)
+    assert tracker.should_display()
+    assert tracker.total_count == 3
+    assert tracker.completed_count == 2
+    assert tracker.is_auto_synthesized is True
+    assert tracker.current_active_step == "Terminal (0.8 s)"
+
+    # 3. 验证此时 CardKit 生成的面板组件
+    from hermes_fry_cards.cardkit.builder import build_task_plan_panel
+    panel = build_task_plan_panel(tracker)
+    assert panel is not None
+    assert panel["tag"] == "collapsible_panel"
+    assert "2/3" in str(panel["header"])
+
+    # 4. 如果中途模型突然显式调用了 update_plan -> 优先尊重显式高层计划，覆盖自动合成
+    explicit_plan = [
+        {"id": "A", "step": "排查根因", "status": "completed"},
+        {"id": "B", "step": "修复代码", "status": "completed"},
+        {"id": "C", "step": "测试验收", "status": "completed"},
+    ]
+    tracker.update_plan(explicit_plan)
+    assert tracker.is_auto_synthesized is False
+    assert tracker.is_all_completed is True
+    assert tracker.steps[0].step == "排查根因"
+
 
 
 

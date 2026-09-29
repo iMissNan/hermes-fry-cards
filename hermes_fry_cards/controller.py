@@ -349,6 +349,10 @@ class StreamCardController(StreamingController):
                         session.message_id[:12],
                     )
 
+        # 真正像「工具执行中」一样天生自带：底层自动聚合成任务看板（若无显式规划）
+        if session.task_plan:
+            session.task_plan.sync_from_tool_use(session.tool_use.build_display_steps())
+
         session.segment_state.on_tool_event(len(session.tool_use.build_display_steps()))
         self._schedule_flush(session)
         return True
