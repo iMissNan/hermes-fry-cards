@@ -33,11 +33,11 @@ def _get_secret(name: str, home: Path | None = None) -> str:
         pass
     if os.environ.get(name):
         return os.environ[name]
-    # 仅当没有传入自定义 home（即默认主 profile）时才允许兜底读 ~/.hermes/.env
-    if home is None:
+    # 允许主 profile 兜底读取 ~/.hermes/.env（单 profile 或默认 profile 部署）
+    if home is None or home.resolve() == hermes_home().resolve():
         try:
             from dotenv import dotenv_values
-            env_file = hermes_home() / ".env"
+            env_file = (home or hermes_home()) / ".env"
             if env_file.exists():
                 vals = dotenv_values(env_file)
                 return str(vals.get(name) or "")
