@@ -7,6 +7,133 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.4.7] - 2026-09-29
+
+### 变更 / Changed
+- **Studio 图标全面 SVG 化**：字段列表 ↑↓ 调序按钮改为 SVG chevron，主题切换按钮
+  （月亮 / 太阳）与 GitHub 顶栏图标同步替换文字/emoji——随主题色 `currentColor` 渲染，
+  暗色下不再出现彩色 emoji 与界面割裂；操作按钮补 `aria-label`。
+
+---
+
+## [0.4.6] - 2026-09-29
+
+### 新增 / Added
+- **Studio 字段 chips 拖动排序**：footer 与统一面板两组字段 chips 支持按住拖动调整顺序
+  （原生 HTML5 Drag & Drop，无依赖）；保存按容器内实际顺序写入 `streaming.footer.fields` /
+  `display.platforms.feishu.panel_fields`（替代原先固定 FIELD_ORDER 排序）；重新打开 Studio
+  时按已保存顺序回填重排 chips（未选字段保持相对顺序跟在后面）。多行 fields 配置下 chips
+  仍整体禁用（不可点也不可拖）。
+
+---
+
+## [0.4.5] - 2026-09-29
+
+### 新增 / Added
+- **包首发 PyPI**：[pypi.org/project/hermes-fry-cards](https://pypi.org/project/hermes-fry-cards) —
+  支持 `pip install hermes-fry-cards` 直接安装（升级 `pip install -U hermes-fry-cards`），
+  安装后仍需 `verify` → `install` 注入并重启网关。
+
+### 变更 / Changed
+- **主色柔化**：黑白主题的操作色由纯黑 `#1b1c1f` 调整为石墨蓝灰 `#39404a`（暗色下反白
+  同步柔化为 `#e7e8ea`），激活 tab / 选中 chip / 主按钮增加同色系轻阴影，缓解高对比
+  生硬感；checkbox、toast、按钮 hover 全部随变量自动过渡。纯 CSS 变量调整，无功能变化。
+
+---
+
+## [0.4.4] - 2026-09-28
+
+### 变更 / Changed
+- **Studio 视觉体系对齐 CreditDaddy**（纯前端，功能与配置键不变）：
+  - 黑白主操作色（激活 tab / 选中 chip / 主按钮黑底白字，暗色下自动反白）
+  - 顶栏重构：🍟 logo + 大标题 + `v版本 · 配置路径` 副行，右侧 GitHub / 主题切换图标按钮
+  - 配置 / 预览 / 状态改为独立**胶囊导航条**（白底圆角容器 + 激活黑胶囊）
+  - fieldset 去边框**卡片化**（大圆角 + 浅阴影），提示条同款卡片化
+  - 新增**亮 / 暗双主题**（右上角 🌙/☀️ 切换，localStorage 记忆，head 内联预设防刷新闪白）
+  - 全量颜色变量化（暗色下输入框 / 别名编辑器 / 状态卡 / toast 全套适配）
+
+---
+
+## [0.4.3] - 2026-09-28
+
+### 修复 / Fixed
+- **Studio「面板 header 字段」chips 点击无反应** — 0.4.2 新增的统一面板字段选择区漏绑
+  click 事件（footer 字段区已有），点击无法切换选中态；补齐事件绑定，勾选/取消恢复正常，
+  保存排序（PANEL_FIELD_ORDER）与 `display.platforms.feishu.panel_fields` 写入链路不变。
+
+---
+
+## [0.4.2] - 2026-09-28
+
+### 新增 / Added
+- **footer 新增 `speed`（tok/s）与 `cache`（缓存命中 %）字段** — 口径与 Hermes CLI 状态栏一致：
+  速度 = 滚动近 10 次 API 调用 `sum(output)/sum(latency)` 纯生成吞吐（剔除工具执行时间）；
+  命中率 = `cache_read / prompt_tokens`（prompt 已含缓存，同 `turn_usage.py` 归一化）。
+  数据取自 gateway 活跃 agent（`_running_agents` → `_agent_cache` tuple 解包）best-effort
+  采集（`patch.collect_stream_stats`），零读取/无 agent 时字段自动隐藏（无数据 ≠ 0%）。
+  默认 footer 布局变为 `[status, elapsed, speed, cache, context, model]`。
+- **统一面板 header 字段化，与 footer 共用字段池** — 新增 `display.platforms.feishu.panel_fields`
+  （有序一维列表，默认 `[model, reasoning, tools, context, elapsed]` 与历史布局逐字一致）；
+  面板专属字段 `reasoning`（💭 推理轮数）/ `tools`（🔧 工具步数）零计数自动隐藏，
+  共享字段（speed/cache/tokens/status 等）经 footer 渲染器回落；面板 header 标题补 i18n
+  （英文 `Cache hit {}%` / 中文 `缓存命中 {}%`）。
+- **Studio 字段自由组合** — footer 与统一面板各一组 chip 开关（参考 CreditDaddy 仪表盘
+  组件开关交互），勾选即组合、保存排序；预览（真实 builder）footer_data 带
+  `208 tok/s` / `缓存命中 54%` 样例；统一面板字段区含 9 个可选字段。
+- **上下文显示格式 `bar`/`block` 支持面板 header 复用** — 面板 context 渲染与 footer
+  共用 `_context_progress_bar` 等助手，`block`/`block_text` 废弃样式照旧回落。
+
+### 修复 / Fixed
+- **Studio footer 字段白名单缺 `speed`/`cache`** — GUI 勾选新字段保存会被 400 拒绝；
+  `_FOOTER_FIELDS` 校验白名单补齐（含测试回归）。
+
+### 升级注意
+- 注入模板变更（完成钩子/排队 follow-up 钩子新增 stats 采集），**已装环境须重跑
+  `uninstall` + `install`**；旧模板不传新键，controller 侧向后兼容（字段自动隐藏）。
+
+---
+
+## [0.4.1] - 2026-09-28
+
+### 变更 / Changed
+- **Studio 默认监听 `0.0.0.0:8765`**（原 `127.0.0.1`）— `_cmd_studio` 默认值、`run_studio_server` 默认值、
+  `systemd/hermes-fry-cards-studio.service` 的 `ExecStart` 三处同步；本机仍打印/打开 `http://127.0.0.1:8765`
+  （新增 `_display_host` 把通配地址回落 loopback，避免浏览器拿到 `http://0.0.0.0:8765`），
+  局域网用 `http://<本机IP>:8765` 访问。
+- Host 门白名单**可配置**：新增 `studio.allowed_hosts`（附加网段前缀或完整主机，默认仅 loopback），
+  取代硬编码网段；非白名单来源照旧 403；README / README.en 补「Studio 可写
+  config.yaml 与飞书凭据，别做端口转发或公网暴露」警告与 `--host 127.0.0.1` 回退方式。
+
+### 修复 / Fixed
+- **完成态卡片丢失最终答案**（[#13](https://github.com/techysy/hermes-fry-cards/issues/13)）—
+  多工具回合中工具间旁白形成 ANSWER 段后，完成态注入被旧 guard 整体跳过；现改为完成态答案
+  追加为新 ANSWER 段（保住交错时间线），`endswith` 去重 + 完成重试防重放。
+- **cron 投递 230001 invalid receive_id**（[#14](https://github.com/techysy/hermes-fry-cards/issues/14)）—
+  Hermes 0.21.0 起部分调度布局的 delivery 是 dict，旧钩子仅走 `getattr` 取不到 `chat_id`；
+  现 dict/attr 双路径 + `delivery → locals → target` 三级优先，跨调度布局解析投递身份。
+- **clarify toast 导入拖爆 adapter 10s 加载预算**（[#15](https://github.com/techysy/hermes-fry-cards/issues/15)）—
+  `apply_patch` 在 adapter 导入期执行，toast 类的 SDK 导入等效顶层导入（冷进程 9–16s）；
+  改为首次回调需要时惰性加载（哨兵缓存，旧 SDK 缺失静默降级），adapter 导入不再触碰 SDK。
+- **Studio 正文大字号**（[#16](https://github.com/techysy/hermes-fry-cards/issues/16) 部分）—
+  字号白名单补 `heading` 档并在 Studio 暴露。
+
+### 新增 / Added（补录）
+- **完成通知**（[#16](https://github.com/techysy/hermes-fry-cards/issues/16) 部分）—
+  `streaming.completion_notice` / `completion_notice_text`（默认关）：卡片收尾后以回复形式
+  发送「回答结束 · 耗时」短通知（CardKit 更新不触发飞书提醒的兜底）。
+
+### 新增 / Added
+- **Studio systemd 用户服务模板** — 新增 `systemd/hermes-fry-cards-studio.service`，支持登录/系统启动后自动启动、异常退出自动重启和 `journalctl` 日志；默认监听 `0.0.0.0:8765`（本机 `127.0.0.1:8765`），不会自动打开浏览器。
+- **Studio 自启文档** — README 与英文文档补充安装、启用、状态检查和日志查看命令。
+- `TestWildcardBindDefaults`：守住三处默认绑 `0.0.0.0`（CLI / `run_studio_server` / systemd 模板）
+  与 `_display_host` 通配地址回落 loopback。
+
+### 验证 / Tests
+- 验证服务模板使用 Hermes venv Python、`--no-browser` 和 `Restart=on-failure`。
+- `pytest tests/ -q` 713 passed / 0 failed（含 4 例默认绑定守护）。
+
+---
+
 ## [0.4.0] - 2026-09-20
 
 > **算法与架构大改版**：渲染层引入 Markdown 防爆引擎（无损表格压缩 + 字节级内容预算），

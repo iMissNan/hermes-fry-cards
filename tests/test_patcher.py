@@ -777,6 +777,7 @@ class TestCronApplyRemove:
         content = scheduler_copy.read_text(encoding="utf-8")
         assert "on_cron_deliver" in content
         assert "str(_lark_platform_name).lower()" in content
+        assert "isinstance(_lark_delivery, dict)" in content
         assert "is_relay" in content
         assert "injected hook failed: cron_deliver" in content
         assert "delivered = True" in content
@@ -798,14 +799,7 @@ class TestCronApplyRemove:
         ):
             fallback = deliver(targets, " failed ", object())
 
-        assert sent == [
-            (
-                "oc_same",
-                "failed",
-                "test",
-                "2026-06-10T14:30:00+08:00",
-            )
-        ]
+        assert sent == [("oc_same", "failed", "test", "2026-06-10T14:30:00+08:00")]
         assert fallback == []
 
     def test_injected_hook_retries_duplicate_target_after_failure(self) -> None:
@@ -830,6 +824,47 @@ class TestCronApplyRemove:
 
         assert fallback == ["oc_relay"]
         mock_deliver.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("delivery", "target", "expected_chat"),
+        [
+            (
+                {"platform_name": "feishu", "chat_id": "oc_dict", "transport": None},
+                {"platform": "telegram", "chat_id": "oc_wrong"},
+                "oc_dict",
+            ),
+            (
+                SimpleNamespace(platform_name="feishu", chat_id="oc_object", transport=None),
+                {"platform": "telegram", "chat_id": "oc_wrong"},
+                "oc_object",
+            ),
+            (
+                SimpleNamespace(platform_name="", chat_id=""),
+                {"platform": "feishu", "chat_id": "oc_target"},
+                "oc_target",
+            ),
+        ],
+        ids=["delivery-dict-wins", "delivery-object-wins", "target-fallback"],
+    )
+    def test_uses_resolved_delivery_identity(self, delivery, target, expected_chat: str) -> None:
+        namespace = {
+            "job": {"name": "weekly", "next_run_at": "2026-09-28T10:00:00Z"},
+            "target": target,
+            "t": delivery,
+        }
+        source = (
+            "def deliver(cleaned_delivery_content, loop, t, target):\n"
+            "    delivered = False\n"
+            "    for _ in (None,):\n"
+            "        transport = None\n"
+            f"{_cron_deliver_hook('        ')}"
+            "    return delivered\n"
+        )
+        exec(compile(source, "<cron-resolved-target-test>", "exec"), namespace)
+        with patch("hermes_fry_cards.patch.on_cron_deliver", return_value=True) as mock_deliver:
+            assert namespace["deliver"]("weekly report", None, delivery, target) is True
+        mock_deliver.assert_called_once()
+        assert mock_deliver.call_args.kwargs["chat_id"] == expected_chat
 
 
 class TestCronBackupRestore:
@@ -927,6 +962,27 @@ class TestQueuedFollowupHooks:
             ctrl.consume_text_fallback.assert_called_once_with("msg")
             assert "response_previewed" not in result
 
+    @pytest.mark.asyncio
+    async def test_boundary_merges_stream_stats_into_tokens(self) -> None:
+        from hermes_fry_cards.patch import on_queued_followup_boundary
+
+        with patch("hermes_fry_cards.patch.get_controller") as mock_get:
+            ctrl = MagicMock()
+            ctrl.enabled = True
+            ctrl.on_completed_wait = AsyncMock(return_value=True)
+            mock_get.return_value = ctrl
+            result = {"final_response": "ok", "input_tokens": 100, "output_tokens": 50}
+
+            stats = {"cache_read_tokens": 80, "tokens_per_sec": 120.5}
+            sent = await on_queued_followup_boundary(
+                message_id="msg", result=result, stream_stats=stats
+            )
+            assert sent is True
+
+            kwargs = ctrl.on_completed_wait.await_args.kwargs
+            assert kwargs["tokens"]["cache_read_tokens"] == 80
+            assert kwargs["tokens"]["tokens_per_sec"] == 120.5
+
     def test_result_hook_preserves_deepest_completion_id(self) -> None:
         from hermes_fry_cards.patch import on_queued_followup_result
 
@@ -939,6 +995,91 @@ class TestQueuedFollowupHooks:
             on_queued_followup_result(message_id="outer", followup_result=result)
 
             assert result["_hermes_lark_completion_id"] == "deep"
+
+
+class TestCollectStreamStats:
+    """collect_stream_stats — 从 gateway 活跃 agent 采集缓存/速度指标 (best-effort)."""
+
+    @staticmethod
+    def _agent(**overrides):
+        from collections import deque
+
+        base = dict(
+            session_cache_read_tokens=8300,
+            _api_latency_history=deque([2.0, 3.0], maxlen=10),
+            _api_output_history=deque([300, 400], maxlen=10),
+        )
+        base.update(overrides)
+        return SimpleNamespace(**base)
+
+    def test_empty_inputs_return_empty(self) -> None:
+        from hermes_fry_cards.patch import collect_stream_stats
+
+        assert collect_stream_stats(None, "sk") == {}
+        assert collect_stream_stats(SimpleNamespace(), None) == {}
+        assert collect_stream_stats(SimpleNamespace(), "") == {}
+
+    def test_agent_missing_returns_empty(self) -> None:
+        from hermes_fry_cards.patch import collect_stream_stats
+
+        gw = SimpleNamespace(_running_agents={}, _agent_cache={})
+        assert collect_stream_stats(gw, "sk") == {}
+
+    def test_agent_from_running_agents(self) -> None:
+        from hermes_fry_cards.patch import collect_stream_stats
+
+        agent = self._agent()
+        gw = SimpleNamespace(_running_agents={"sk": agent}, _agent_cache={})
+        stats = collect_stream_stats(gw, "sk")
+        assert stats["cache_read_tokens"] == 8300
+        assert stats["tokens_per_sec"] == pytest.approx(700 / 5.0)
+
+    def test_agent_from_agent_cache_tuple(self) -> None:
+        from hermes_fry_cards.patch import collect_stream_stats
+
+        agent = self._agent()
+        gw = SimpleNamespace(_running_agents={}, _agent_cache={"sk": (agent, "meta")})
+        stats = collect_stream_stats(gw, "sk")
+        assert stats["cache_read_tokens"] == 8300
+        assert stats["tokens_per_sec"] == pytest.approx(140.0)
+
+    def test_zero_cache_read_omitted(self) -> None:
+        from hermes_fry_cards.patch import collect_stream_stats
+
+        agent = self._agent(session_cache_read_tokens=0)
+        gw = SimpleNamespace(_running_agents={"sk": agent}, _agent_cache={})
+        assert "cache_read_tokens" not in collect_stream_stats(gw, "sk")
+
+    def test_zero_total_latency_omits_speed(self) -> None:
+        from hermes_fry_cards.patch import collect_stream_stats
+
+        agent = self._agent(_api_latency_history=[0.0, 0.0])
+        gw = SimpleNamespace(_running_agents={"sk": agent}, _agent_cache={})
+        assert "tokens_per_sec" not in collect_stream_stats(gw, "sk")
+
+    def test_nonfinite_latency_filtered(self) -> None:
+        from collections import deque
+
+        from hermes_fry_cards.patch import collect_stream_stats
+
+        agent = self._agent(_api_latency_history=deque([float("nan"), 2.0], maxlen=10))
+        gw = SimpleNamespace(_running_agents={"sk": agent}, _agent_cache={})
+        stats = collect_stream_stats(gw, "sk")
+        assert stats["tokens_per_sec"] == pytest.approx(700 / 2.0)
+
+    def test_misaligned_histories_tail_aligned(self) -> None:
+        from hermes_fry_cards.patch import collect_stream_stats
+
+        # 长度不齐时取尾部对齐（同 cli_status_bar_mixin 的 min-length 截断）
+        agent = self._agent(_api_output_history=[100, 200, 300, 400])
+        gw = SimpleNamespace(_running_agents={"sk": agent}, _agent_cache={})
+        stats = collect_stream_stats(gw, "sk")
+        assert stats["tokens_per_sec"] == pytest.approx(700 / 5.0)
+
+    def test_gateway_without_internals(self) -> None:
+        from hermes_fry_cards.patch import collect_stream_stats
+
+        assert collect_stream_stats(SimpleNamespace(), "sk") == {}
 
 
 class TestGroupSecurityBoundary:

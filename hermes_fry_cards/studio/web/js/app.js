@@ -2,9 +2,64 @@
 (function () {
   "use strict";
 
-  var FIELD_ORDER = ["status", "elapsed", "model", "tokens", "context"];
   var $ = function (sel) { return document.querySelector(sel); };
   var esc = window.FryPreview.escapeHtml;
+
+  /* ---------- 主题（亮 / 暗，localStorage 记忆） ---------- */
+  var ICON_MOON = '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>';
+  var ICON_SUN = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4.4"/><path d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.6 4.6l1.8 1.8M17.6 17.6l1.8 1.8M19.4 4.6l-1.8 1.8M6.4 17.6l-1.8 1.8"/></svg>';
+  var themeBtn = document.getElementById("theme-toggle");
+  function applyTheme(t) {
+    document.documentElement.setAttribute("data-theme", t);
+    themeBtn.innerHTML = t === "dark" ? ICON_SUN : ICON_MOON;
+    try { localStorage.setItem("fry-theme", t); } catch (e) { /* 隐私模式忽略 */ }
+  }
+  var savedTheme = "light";
+  try { savedTheme = localStorage.getItem("fry-theme") || "light"; } catch (e) { /* ignore */ }
+  applyTheme(savedTheme);
+  themeBtn.addEventListener("click", function () {
+    var cur = document.documentElement.getAttribute("data-theme") === "dark" ? "dark" : "light";
+    applyTheme(cur === "dark" ? "light" : "dark");
+  });
+
+  /* ---------- 字段列表（勾选启用，↑↓ 调整顺序） ---------- */
+  function moveField(containerId, field, dir) {
+    var box = document.getElementById(containerId);
+    var rows = Array.prototype.slice.call(box.querySelectorAll(".field-row"));
+    var idx = -1;
+    rows.forEach(function (r, i) { if (r.dataset.field === field) idx = i; });
+    var to = idx + dir;
+    if (idx < 0 || to < 0 || to >= rows.length) return;
+    var ref = rows[to];
+    box.removeChild(rows[idx]);
+    if (dir < 0) box.insertBefore(rows[idx], ref);
+    else box.insertBefore(rows[idx], ref.nextSibling);
+  }
+  document.querySelectorAll(".field-list").forEach(function (box) {
+    box.addEventListener("click", function (e) {
+      var btn = e.target.closest(".op-btn");
+      if (!btn || box.classList.contains("locked")) return;
+      var row = btn.closest(".field-row");
+      moveField(box.id, row.dataset.field, parseInt(btn.dataset.move, 10));
+    });
+  });
+
+  /* 按 order 重排字段行（已保存顺序在前，未选字段保持相对顺序跟在后面） */
+  function orderRows(container, order) {
+    if (!container || !order || !order.length) return;
+    var rows = Array.prototype.slice.call(container.querySelectorAll(".field-row"));
+    var byField = {};
+    rows.forEach(function (r) { byField[r.dataset.field] = r; });
+    var seen = {};
+    var result = [];
+    order.forEach(function (f) {
+      if (byField[f] && !seen[f]) { result.push(byField[f]); seen[f] = true; }
+    });
+    rows.forEach(function (r) {
+      if (!seen[r.dataset.field]) { result.push(r); seen[r.dataset.field] = true; }
+    });
+    result.forEach(function (r) { container.appendChild(r); });
+  }
 
   /* ---------- tabs ---------- */
   document.getElementById("tabs").addEventListener("click", function (e) {
@@ -72,6 +127,8 @@
     setCheck("f-enabled", s.enabled);
     setVal("f-width", s.width_mode);
     setCheck("f-panel-expanded", s.panel_expanded);
+    setCheck("f-completion-notice", s.completion_notice);
+    setVal("f-completion-notice-text", s.completion_notice_text);
     setVal("f-content-lang", s.content_lang);
 
     // 聊天类型：三选项覆盖常见形态；异常值显示自定义项并在保存时原样保留
@@ -89,8 +146,12 @@
 
     __origFields = s.footer.fields;
     var firstRow = (s.footer.fields && s.footer.fields[0]) || [];
-    document.querySelectorAll("#f-footer-fields .chip").forEach(function (c) {
-      c.classList.toggle("on", firstRow.indexOf(c.dataset.field) >= 0);
+    var multi = !!(s.footer.fields && s.footer.fields.length > 1);
+    var footerBox = document.getElementById("f-footer-fields");
+    footerBox.classList.toggle("locked", multi);
+    if (!multi) orderRows(footerBox, firstRow);
+    footerBox.querySelectorAll(".field-row").forEach(function (r) {
+      r.querySelector("input").checked = firstRow.indexOf(r.dataset.field) >= 0;
     });
     var multi = __origFields && __origFields.length > 1;
     document.querySelectorAll("#f-footer-fields .chip").forEach(function (c) {
@@ -110,6 +171,12 @@
     setVal("f-max-panels", d.max_reasoning_panels);
     setVal("f-unified-min-duration", d.unified_panel_min_duration);
     setVal("f-context-mode", d.context_display_mode);
+
+    var pf = d.panel_fields || [];
+    orderRows(document.getElementById("f-panel-fields"), pf);
+    document.querySelectorAll("#f-panel-fields .field-row").forEach(function (r) {
+      r.querySelector("input").checked = pf.indexOf(r.dataset.field) >= 0;
+    });
 
     var gsb = ((state.gateway || {}).group_security_boundary) || {};
     setCheck("f-gsb-enabled", gsb.enabled);
@@ -138,14 +205,20 @@
       .map(function (s) { return s.trim(); })
       .filter(Boolean);
 
+    // 按列表内实际顺序（含 ↑↓ 调整结果）收集勾选字段
     var picked = [];
-    document.querySelectorAll("#f-footer-fields .chip.on").forEach(function (c) {
-      picked.push(c.dataset.field);
+    document.querySelectorAll("#f-footer-fields .field-row").forEach(function (r) {
+      if (r.querySelector("input").checked) picked.push(r.dataset.field);
     });
-    var ordered = FIELD_ORDER.filter(function (f) { return picked.indexOf(f) >= 0; });
     var fields;
     if (__origFields && __origFields.length > 1) fields = __origFields; // 多行原样保留
-    else fields = ordered.length ? [ordered] : [];
+    else fields = picked.length ? [picked] : [];
+
+    var pickedPanel = [];
+    document.querySelectorAll("#f-panel-fields .field-row").forEach(function (r) {
+      if (r.querySelector("input").checked) pickedPanel.push(r.dataset.field);
+    });
+    var panelFields = pickedPanel;
 
     return {
       streaming: {
@@ -153,6 +226,8 @@
         content_lang: $("#f-content-lang").value,
         chat_types: chatTypes,
         panel_expanded: $("#f-panel-expanded").checked,
+        completion_notice: $("#f-completion-notice").checked,
+        completion_notice_text: $("#f-completion-notice-text").value,
         width_mode: $("#f-width").value,
         header: {
           enabled: $("#f-header-enabled").checked,
@@ -175,6 +250,7 @@
         max_reasoning_panels: int("#f-max-panels"),
         unified_panel_min_duration: num("#f-unified-min-duration"),
         context_display_mode: $("#f-context-mode").value,
+        panel_fields: panelFields,
       },
       gateway: {
         group_security_boundary: {
@@ -194,8 +270,12 @@
     return data;
   }
 
-  $("#config-form").addEventListener("submit", async function (e) {
-    e.preventDefault();
+  $("#btn-reload").addEventListener("click", function () {
+    loadState().then(function () { toast("已重新读取磁盘配置", ""); })
+      .catch(function (e) { toast("读取失败：" + e.message, "err"); });
+  });
+
+  async function saveConfig() {
     var btn = $("#btn-save");
     btn.disabled = true;
     try {
@@ -216,23 +296,29 @@
       toast(parts.length ? "已保存：" + parts.join("；") : "无配置变化", "ok");
       await loadState();
       await loadAliases();
+      return true;
     } catch (err) {
       toast("保存失败：" + err.message, "err");
+      return false;
     } finally {
       btn.disabled = false;
     }
+  }
+
+  $("#config-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    saveConfig();
   });
 
-  $("#btn-reload").addEventListener("click", function () {
-    loadState().then(function () { toast("已重新读取磁盘配置", ""); })
-      .catch(function (e) { toast("读取失败：" + e.message, "err"); });
-  });
-
-  document.querySelectorAll("#f-footer-fields .chip").forEach(function (c) {
-    c.addEventListener("click", function () {
-      if (c.disabled) return;
-      c.classList.toggle("on");
-    });
+  /* 保存并预览：落盘后切到预览页签直接渲染效果 */
+  $("#btn-save-preview").addEventListener("click", async function () {
+    var btn = this;
+    btn.disabled = true;
+    var ok = await saveConfig();
+    btn.disabled = false;
+    if (!ok) return;
+    document.querySelector('.tab[data-tab="preview"]').click();
+    $("#btn-render").click();
   });
 
   /* ---------- 预览 ---------- */

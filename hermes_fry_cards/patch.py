@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Callable
 from functools import wraps
 from inspect import iscoroutinefunction
@@ -181,6 +182,61 @@ def on_message_started(
     )
 
 
+def collect_stream_stats(gateway: Any, session_key: str | None) -> dict[str, Any]:
+    """Best-effort 采集会话级缓存命中与生成速度指标，供完成卡片 footer 展示.
+
+    数据取自 gateway 持有的活跃 agent（_running_agents 优先，其次 _agent_cache，
+    后者为 tuple 包装）。口径与 Hermes 自身一致：
+    - 缓存读取: ``agent.session_cache_read_tokens``（会话累计；命中率 =
+      cache_read / prompt_tokens，prompt 已含缓存，见 agent/turn_usage.py 的归一化）；
+    - 速度: ``_api_latency_history`` / ``_api_output_history`` 滚动近 10 次 API 调用的
+      sum(output)/sum(latency) 纯生成吞吐（同 CLI 状态栏，剔除工具执行时间）。
+
+    任一数据不可得即省略对应键；agent 不在缓存（被逐出/非方法作用域）返回 {}，
+    footer 渲染端对缺失字段自动隐藏。
+    """
+    if gateway is None or not session_key:
+        return {}
+    agent: Any = None
+    try:
+        running = getattr(gateway, "_running_agents", None)
+        if isinstance(running, dict):
+            agent = running.get(session_key)
+        if agent is None:
+            cache = getattr(gateway, "_agent_cache", None)
+            if cache is not None:
+                entry = cache.get(session_key)
+                agent = (entry[0] if entry else None) if isinstance(entry, tuple) else entry
+    except Exception:
+        return {}
+    if agent is None:
+        return {}
+
+    stats: dict[str, Any] = {}
+    try:
+        cache_read = int(getattr(agent, "session_cache_read_tokens", 0) or 0)
+        if cache_read > 0:
+            stats["cache_read_tokens"] = cache_read
+    except Exception:
+        pass
+    try:
+        lhist = list(getattr(agent, "_api_latency_history", None) or [])
+        ohist = list(getattr(agent, "_api_output_history", None) or [])
+        n = min(len(lhist), len(ohist))  # 两者同步 append，取尾对齐（同 cli_status_bar_mixin）
+        if n:
+            latencies = [
+                float(x) for x in lhist[-n:]
+                if isinstance(x, (int, float)) and math.isfinite(float(x))
+            ]
+            total_lat = sum(latencies)
+            total_out = sum(int(x) for x in ohist[-n:] if isinstance(x, (int, float)))
+            if total_lat > 0 and total_out > 0:
+                stats["tokens_per_sec"] = total_out / total_lat
+    except Exception:
+        pass
+    return stats
+
+
 @_safe_hook(default_return=False)
 async def on_message_completed_wait(
     *,
@@ -217,7 +273,12 @@ def on_message_needs_text_fallback(*, ctrl: Any, message_id: str) -> bool:
 
 @_safe_hook(default_return=False)
 async def on_queued_followup_boundary(
-    *, ctrl: Any, message_id: str, result: dict[str, Any], session_key: str | None = None
+    *,
+    ctrl: Any,
+    message_id: str,
+    result: dict[str, Any],
+    session_key: str | None = None,
+    stream_stats: dict[str, Any] | None = None,
 ) -> bool:
     """Complete the current card before Hermes drains a queued follow-up turn."""
     if not isinstance(result, dict) or result.get("interrupted"):
@@ -233,6 +294,7 @@ async def on_queued_followup_boundary(
             tokens={
                 "input_tokens": result.get("input_tokens", 0),
                 "output_tokens": result.get("output_tokens", 0),
+                **(stream_stats or {}),
             },
             context={
                 "used_tokens": result.get("last_prompt_tokens", 0),

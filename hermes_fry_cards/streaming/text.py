@@ -10,6 +10,49 @@ _REASONING_TAG = r"(?:think(?:ing)?|thought|antthinking)"
 _REASONING_TAG_RE = re.compile(r"<\s*(/?)\s*" + _REASONING_TAG + r"\s*>", re.IGNORECASE)
 _REASONING_OPEN_RE = re.compile(r"<\s*" + _REASONING_TAG + r"\s*>", re.IGNORECASE)
 _REASONING_CLOSE_RE = re.compile(r"<\s*/\s*" + _REASONING_TAG + r"\s*>", re.IGNORECASE)
+_REASONING_BLOCK_RE = re.compile(
+    r"<\s*" + _REASONING_TAG + r"\s*>[\s\S]*?<\s*/\s*" + _REASONING_TAG + r"\s*>",
+    re.IGNORECASE,
+)
+_REASONING_TAIL_RE = re.compile(r"<\s*" + _REASONING_TAG + r"\s*>[\s\S]*$", re.IGNORECASE)
+# Hermes 在 show_reasoning 开启时会把推理以该格式前置拼进最终 response
+# （run.py: response = f"💭 **Reasoning:**\n```\n{reasoning}\n```\n\n{response}"）。
+# 卡片的推理已由 💭 面板单独渲染，正文里的这一份必须剥掉，否则完成卡片前后重复。
+_HERMES_REASONING_HEADER_RE = re.compile(
+    r"^\s*💭\s*\*\*\s*Reasoning:?\s*\*\*[ \t]*\n```[^\n]*\n"
+)
+
+
+def _strip_hermes_reasoning_prepend(text: str) -> str:
+    """剥掉 Hermes 前置拼接的推理围栏块.
+
+    推理内容里可能还有代码围栏（写代码的思考模型很常见），非贪婪正则会在
+    内层 ``` 处提前截断导致泄漏，这里按围栏深度逐行扫描：带信息串的围栏
+    行开一层，裸围栏行关一层。外层闭合的判定要求其后是空行或串尾（模板
+    保证 "```\\n\\n" + 答案）。深度未归零（推理被截断/围栏不配对）时保底
+    不剥——宁可重复渲染也不吞掉答案正文。
+    """
+    match = _HERMES_REASONING_HEADER_RE.match(text)
+    if not match:
+        return text
+    lines = text[match.end():].split("\n")
+    depth = 1
+    consumed = 0
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped.startswith("```"):
+            continue
+        if re.fullmatch(r"`{3,}", stripped):
+            depth -= 1
+            if depth == 0:
+                consumed = index + 1
+                rest = "\n".join(lines[consumed:])
+                if not rest or rest.startswith("\n"):
+                    return rest.lstrip("\n")
+                depth = 1  # 其后不是空行 → 是内层围栏，继续扫描
+        else:
+            depth += 1
+    return text
 
 
 def split_reasoning_text(text: str | None) -> dict[str, str | None]:
@@ -46,22 +89,14 @@ def extract_thinking_content(text: str) -> str:
 
 
 def strip_reasoning_tags(text: str) -> str:
-    result = _REASONING_OPEN_RE.sub(
-        lambda _: "",
-        _REASONING_CLOSE_RE.sub("", text),
-    )
-    result = re.sub(
-        r"<\s*" + _REASONING_TAG + r"\s*>[\s\S]*?<\s*/\s*" + _REASONING_TAG + r"\s*>",
-        "",
-        result,
-        flags=re.IGNORECASE,
-    )
-    result = re.sub(
-        r"<\s*" + _REASONING_TAG + r"\s*>[\s\S]*$",
-        "",
-        result,
-        flags=re.IGNORECASE,
-    )
+    # 顺序关键：先删完整块和未闭合尾（连带内容），再清残留记号。
+    # 反过来先删记号会让内容失去标签边界，块/尾两条规则永远匹配不上，
+    # reasoning 内容就会漏进 answer —— 完成卡片上与 💭 面板重复。
+    result = _strip_hermes_reasoning_prepend(text)
+    result = _REASONING_BLOCK_RE.sub("", result)
+    result = _REASONING_TAIL_RE.sub("", result)
+    result = _REASONING_CLOSE_RE.sub("", result)
+    result = _REASONING_OPEN_RE.sub("", result)
     if result.strip().startswith(REASONING_PREFIX):
         result = ""
     return result

@@ -53,6 +53,7 @@ class SegmentState:
     """
 
     __slots__ = (
+        "_completion_answers",
         "_counter",
         "segments",
         "max_reasoning_panels",
@@ -60,6 +61,7 @@ class SegmentState:
 
     def __init__(self, max_reasoning_panels: int = 3) -> None:
         self._counter = 0
+        self._completion_answers: set[str] = set()
         self.segments: list[Segment] = []
         # 限制独立 reasoning 面板数量，超出后合并进最后一个 reasoning 面板，
         # 避免「不支持分段思考」的模型频繁切换 thinking/tool 时产生海量面板导致卡片元素溢出。
@@ -128,6 +130,20 @@ class SegmentState:
             self.segments[-1].dirty = True
         else:
             self._new_answer(text)
+
+    def on_completion_answer(self, text: str) -> None:
+        """Append final completion text once, preserving interim answer segments."""
+        if not text or text in self._completion_answers:
+            return
+        if any(
+            segment.type == SegmentType.ANSWER and segment.text.endswith(text)
+            for segment in self.segments
+        ):
+            self._completion_answers.add(text)
+            return
+
+        self._completion_answers.add(text)
+        self._new_answer(text)
 
     def on_tool_event(self, tool_step_count: int) -> None:
         """处理工具调用事件，同类型标记 dirty 否则新建 segment 并终结前序 tool segment."""

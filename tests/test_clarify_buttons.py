@@ -336,9 +336,39 @@ class TestApplyPatch:
         assert Target._hl_handle_clarify is clarify.handle_clarify_card_action
         assert Target._hl_orig_card_action_trigger(None) == "orig"
 
+    def test_patch_application_does_not_import_optional_toast(self, monkeypatch):
+        import builtins
+
+        class Target:
+            @staticmethod
+            def _on_card_action_trigger(data):  # pragma: no cover - sentinel
+                return "orig"
+
+        original_import = builtins.__import__
+        imports = []
+
+        def guarded_import(name, *args, **kwargs):
+            if name == clarify._TOAST_MODULE:
+                imports.append(name)
+                raise AssertionError("optional toast SDK must be imported lazily")
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", guarded_import)
+        assert clarify.apply_patch(
+            Target, SendResult=object, CallBackCard=None, P2CardActionTriggerResponse=None
+        )
+        assert imports == []
+        assert Target._hl_CallBackToast is clarify._TOAST_UNLOADED
+
+        inst = Target()
+        assert clarify._get_callback_toast(inst) is None
+        assert imports == [clarify._TOAST_MODULE]
+        # A failed optional import is cached and does not repeat on later clicks.
+        assert clarify._get_callback_toast(inst) is None
+        assert imports == [clarify._TOAST_MODULE]
+
     def test_none_class_returns_false(self):
         assert clarify.apply_patch(None, SendResult=object) is False
-
 
 # ---------------------------------------------------------------------------
 # Approval gate fix + toast feedback

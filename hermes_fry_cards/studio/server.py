@@ -44,12 +44,27 @@ _WEB_ROOT = (Path(__file__).parent / "web").resolve()
 _MAX_BODY_BYTES = 1_000_000
 _MAX_DRAIN_BYTES = 4_000_000  # 413 时有界排空上限（防未读数据触发客户端写端 RST）
 _BACKUP_KEEP = 20
-_HOSTS_OK = ("127.0.0.1", "localhost", "::1")
+_BASE_HOSTS_OK = ("127.0.0.1", "localhost", "::1")
+_ALLOWED_HOSTS_CACHE: list[str] | None = None  # loopback + studio.allowed_hosts（启动后缓存，重启生效）
 
-_FOOTER_FIELDS = ("status", "elapsed", "model", "tokens", "context")
+
+def _allowed_hosts() -> list[str]:
+    """Host 门白名单：内置 loopback + ``studio.allowed_hosts`` 配置附加（网段前缀或完整主机）."""
+    global _ALLOWED_HOSTS_CACHE
+    if _ALLOWED_HOSTS_CACHE is None:
+        try:
+            extra = Config().studio_allowed_hosts
+        except Exception:
+            extra = []
+        _ALLOWED_HOSTS_CACHE = list(_BASE_HOSTS_OK) + [h for h in extra if h not in _BASE_HOSTS_OK]
+    return _ALLOWED_HOSTS_CACHE
+
+_FOOTER_FIELDS = ("status", "elapsed", "speed", "cache", "model", "tokens", "context")
+_PANEL_FIELDS = ("model", "reasoning", "tools", "context", "elapsed", "speed", "cache", "tokens", "status")
 _WIDTH_MODES = ("default", "compact", "fill")
 _CONTEXT_MODES = ("text", "bar", "text_bar", "block", "block_text")
 _LANGS = ("zh", "en")
+_TEXT_SIZES = ("normal_v2", "normal", "heading", "notation")
 
 _SCENARIOS = ("short", "workflow", "tables", "longtext")
 _OUTCOMES = ("completed", "error", "aborted")
@@ -109,6 +124,14 @@ def _expect_token_str(v: Any, name: str, max_len: int = 32) -> str:
     return str(v)
 
 
+def _expect_notice_text(v: Any, name: str) -> str:
+    if not isinstance(v, str) or not 1 <= len(v.strip()) <= 80:
+        raise ValueError(f"{name} 必须是 1~80 字符的非空字符串")
+    if any(ord(char) < 32 for char in v):
+        raise ValueError(f"{name} 不能包含控制字符")
+    return v.strip()
+
+
 def _expect_range(v: Any, name: str, lo: float, hi: float) -> float:
     if not _is_number(v) or not lo <= float(v) <= hi:
         raise ValueError(f"{name} 必须是 {lo}~{hi} 之间的数字")
@@ -135,6 +158,22 @@ def _validate_fields(v: Any, name: str) -> list[list[str]]:
             seen.add(cell)
         rows.append(list(row))
     return rows
+
+
+def _validate_panel_fields(v: Any, name: str) -> list[str]:
+    """统一面板 header 字段（有序一维列表，可空 = 回落默认布局）."""
+    if not isinstance(v, list):
+        raise ValueError(f"{name} 必须是数组")
+    if len(v) > len(_PANEL_FIELDS):
+        raise ValueError(f"{name} 最多 {len(_PANEL_FIELDS)} 个字段")
+    seen: set[str] = set()
+    for cell in v:
+        if not isinstance(cell, str) or cell not in _PANEL_FIELDS:
+            raise ValueError(f"{name} 字段必须是 {'/'.join(_PANEL_FIELDS)} 之一")
+        if cell in seen:
+            raise ValueError(f"{name} 字段不能重复")
+        seen.add(cell)
+    return list(v)
 
 
 def _validate_chat_types(v: Any, name: str) -> list[str] | None:
@@ -169,6 +208,8 @@ def _validate_chat_list(v: Any, name: str) -> list[str]:
 
 _STREAMING_SCALARS: dict[str, str] = {
     "enabled": "bool",
+    "completion_notice": "bool",
+    "completion_notice_text": "notice_text",
     "content_lang": "lang",
     "chat_types": "chat_types",
     "panel_expanded": "bool",
@@ -191,6 +232,7 @@ _DISPLAY_KEYS: dict[str, str] = {
     "max_reasoning_panels": "panels",
     "unified_panel_min_duration": "dur600",
     "context_display_mode": "context",
+    "panel_fields": "panel_fields",
 }
 _GATEWAY_KEYS = {"enabled": "bool", "allow_chats": "chatlist"}
 
@@ -198,6 +240,8 @@ _GATEWAY_KEYS = {"enabled": "bool", "allow_chats": "chatlist"}
 def _validate_scalar(v: Any, name: str, kind: str) -> Any:
     if kind == "bool":
         return _expect_bool(v, name)
+    if kind == "notice_text":
+        return _expect_notice_text(v, name)
     if kind == "lang":
         return _expect_choice(v, name, _LANGS)
     if kind == "width":
@@ -210,8 +254,10 @@ def _validate_scalar(v: Any, name: str, kind: str) -> Any:
         return _validate_chat_list(v, name)
     if kind == "fields":
         return _validate_fields(v, name)
+    if kind == "panel_fields":
+        return _validate_panel_fields(v, name)
     if kind == "textsize":
-        return _expect_token_str(v, name)
+        return _expect_choice(v, name, _TEXT_SIZES)
     if kind == "dur":
         return _expect_range(v, name, 0, 86400)
     if kind == "dur600":
@@ -681,6 +727,8 @@ def collect_state(home: Path | None = None) -> dict[str, Any]:
         "content_lang": cfg.content_lang,
         "chat_types": sorted(chat) if chat is not None else None,
         "panel_expanded": cfg.panel_expanded,
+        "completion_notice": cfg.completion_notice,
+        "completion_notice_text": cfg.completion_notice_text,
         "width_mode": cfg.width_mode,
         "header": {"enabled": cfg.header_enabled, "min_duration": cfg.header_min_duration},
         "footer": {
@@ -700,6 +748,7 @@ def collect_state(home: Path | None = None) -> dict[str, Any]:
         "max_reasoning_panels": cfg.max_reasoning_panels,
         "unified_panel_min_duration": cfg.unified_panel_min_duration,
         "context_display_mode": cfg.context_display_mode,
+        "panel_fields": cfg.panel_fields,
     }
     gateway = {"group_security_boundary": cfg.group_security_boundary}
     return {
@@ -785,6 +834,8 @@ def _scenario_data(scenario: str) -> tuple[list[Segment], list[ToolDisplayStep],
         "model": "mimo/mimo-x-flash",
         "input_tokens": 15420,
         "output_tokens": 986,
+        "cache_read_tokens": 8300,  # 8300/15420 ≈ 54%，展示 speed/cache 字段效果
+        "tokens_per_sec": 208,
         "context_used": 41200,
         "context_max": 1000000,
     }
@@ -911,6 +962,7 @@ def build_preview(payload: Any, home: Path | None = None) -> dict[str, Any]:
             footer_show_label=bool(sv_footer.get("show_label", False)),
             footer_enabled=sv_footer.get("enabled", True),
             footer_text_size=sv_footer.get("text_size", "notation"),
+            panel_fields=dv.get("panel_fields"),
             panel_expanded=bool(sv.get("panel_expanded", False)),
             header_enabled=common["header_enabled"],
             body_text_size=common["body_text_size"],
@@ -929,22 +981,35 @@ def _host_ok(handler: BaseHTTPRequestHandler) -> bool:
     host = (handler.headers.get("Host") or "").strip().lower()
     if not host:
         return False
-    for base in _HOSTS_OK:
-        if host == base or host.startswith(base + ":"):
+    for base in _allowed_hosts():
+        base_l = base.lower()
+        if host == base_l or host.startswith(base_l + ":"):
             return True
-        if base != "::1" and host == f"[{base}]":
+        if base_l != "::1" and host == f"[{base_l}]":
             return True
-        if host.startswith(f"[{base}]:"):
+        if host.startswith(f"[{base_l}]:"):
+            return True
+        # prefix entries (e.g. "192.168.31.") match any host starting with them
+        if base_l.endswith(".") and host.startswith(base_l):
             return True
     return host == "[::1]"
 
 
-def run_studio_server(host: str = "127.0.0.1", port: int = 8765, *, open_browser: bool = True) -> int:
+def _display_host(host: str) -> str:
+    """0.0.0.0 / :: 是通配地址，不能拿来开浏览器或拼可点 URL — 统一回落 127.0.0.1."""
+    return "127.0.0.1" if host in ("0.0.0.0", "::") else host
+
+
+def run_studio_server(host: str = "0.0.0.0", port: int = 8765, *, open_browser: bool = True) -> int:
     httpd = ThreadingHTTPServer((host, port), StudioHandler)
     httpd.daemon_threads = True
     real_port = httpd.server_address[1]
-    url = f"http://{host}:{real_port}/"
+    # 0.0.0.0 / :: 是通配地址，不能拿来开浏览器：本机一律用 127.0.0.1 拼 URL
+    local_host = _display_host(host)
+    url = f"http://{local_host}:{real_port}/"
     print(f"🍟 fry-cards Studio — {url}")
+    if local_host != host:
+        print(f"  LAN  : http://<本机IP>:{real_port}/  （非 loopback 来源需在 config.yaml 配 studio.allowed_hosts）")
     print("  Ctrl+C 停止")
     if open_browser:
         timer = threading.Timer(0.3, lambda: webbrowser.open(url))

@@ -995,6 +995,139 @@ class TestAwaitedCompletion:
         assert session.segment_state.segments[0].text == "short"
 
     @pytest.mark.asyncio
+    async def test_interim_answer_does_not_suppress_final_completion_answer(self) -> None:
+        ctrl = _setup_ctrl()
+        session = CardSession("msg_interim_final", "chat", asyncio.get_running_loop())
+        session.state = SessionState.STREAMING
+        session.card_id = "card_interim_final"
+        session.card_msg_id = "card_msg_interim_final"
+        session.segment_state = SegmentState()
+        # Interim prose in Hermes's stream_delta_cb appears between tool calls.
+        session.segment_state.on_answer_delta("先检查它是否安装")
+        session.segment_state.on_tool_event(1)
+        session.segment_state.on_answer_delta("现在安装并验证")
+        ctrl._sessions[session.message_id] = session
+
+        with patch.object(ctrl, "_complete_session_wait", new_callable=AsyncMock, return_value=True):
+            assert await ctrl.on_completed_wait(
+                message_id=session.message_id,
+                answer="最终结果：已成功安装并通过验证。",
+            ) is True
+
+        answers = [
+            seg.text for seg in session.segment_state.segments if seg.type == "answer"
+        ]
+        assert answers == ["先检查它是否安装", "现在安装并验证", "最终结果：已成功安装并通过验证。"]
+
+    @pytest.mark.asyncio
+    async def test_streamed_final_answer_is_not_duplicated(self) -> None:
+        ctrl = _setup_ctrl()
+        session = CardSession("msg_final_streamed", "chat", asyncio.get_running_loop())
+        session.state = SessionState.STREAMING
+        session.card_id = "card_final_streamed"
+        session.card_msg_id = "card_msg_final_streamed"
+        session.segment_state = SegmentState()
+        session.segment_state.on_answer_delta("此前文本。最终结果：已完成。")
+        ctrl._sessions[session.message_id] = session
+
+        with patch.object(ctrl, "_complete_session_wait", new_callable=AsyncMock, return_value=True):
+            assert await ctrl.on_completed_wait(
+                message_id=session.message_id,
+                answer="最终结果：已完成。",
+            ) is True
+
+        assert [seg.text for seg in session.segment_state.segments] == [
+            "此前文本。最终结果：已完成。"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_completion_answer_with_reasoning_tags_not_duplicated(self) -> None:
+        ctrl = _setup_ctrl()
+        session = CardSession("msg_final_tagged", "chat", asyncio.get_running_loop())
+        session.state = SessionState.STREAMING
+        session.card_id = "card_final_tagged"
+        session.card_msg_id = "card_msg_final_tagged"
+        session.segment_state = SegmentState()
+        session.segment_state.on_answer_delta("Hello")
+        ctrl._sessions[session.message_id] = session
+
+        with patch.object(ctrl, "_complete_session_wait", new_callable=AsyncMock, return_value=True):
+            assert await ctrl.on_completed_wait(
+                message_id=session.message_id,
+                answer="<think>rea</think>Hello",
+            ) is True
+
+        # 标签内 reasoning 已剥掉，答案与流式段去重，不再追加重复段
+        assert [seg.text for seg in session.segment_state.segments] == ["Hello"]
+
+    @pytest.mark.asyncio
+    async def test_completion_answer_with_hermes_reasoning_prepend_not_duplicated(self) -> None:
+        ctrl = _setup_ctrl()
+        session = CardSession("msg_final_prepend", "chat", asyncio.get_running_loop())
+        session.state = SessionState.STREAMING
+        session.card_id = "card_final_prepend"
+        session.card_msg_id = "card_msg_final_prepend"
+        session.segment_state = SegmentState()
+        session.segment_state.on_reasoning_delta("step 1")
+        session.segment_state.on_answer_delta("Hello")
+        ctrl._sessions[session.message_id] = session
+
+        with patch.object(ctrl, "_complete_session_wait", new_callable=AsyncMock, return_value=True):
+            assert await ctrl.on_completed_wait(
+                message_id=session.message_id,
+                answer="💭 **Reasoning:**\n```\nstep 1\nstep 2\n```\n\nHello",
+            ) is True
+
+        answers = [seg.text for seg in session.segment_state.segments if seg.type == "answer"]
+        assert answers == ["Hello"]
+        # reasoning 只保留 💭 面板这一份（segments 里的 reasoning 段）
+        assert [
+            seg.text for seg in session.segment_state.segments if seg.type == "reasoning"
+        ] == ["step 1"]
+
+    @pytest.mark.asyncio
+    async def test_thinking_tagged_text_does_not_leak_into_answer(self) -> None:
+        ctrl = _setup_ctrl()
+        session = CardSession("msg_think_tags", "chat", asyncio.get_running_loop())
+        session.state = SessionState.STREAMING
+        session.card_id = "card_think_tags"
+        session.card_msg_id = "card_msg_think_tags"
+        session.segment_state = SegmentState()
+        ctrl._sessions[session.message_id] = session
+
+        ctrl.on_thinking(message_id=session.message_id, text="<think>rea</think>")
+        ctrl.on_thinking(message_id=session.message_id, text="Reasoning:\n_more_")
+        ctrl.on_answer(message_id=session.message_id, text="<think>rea2</think>Hello")
+
+        types = [seg.type for seg in session.segment_state.segments]
+        # 只有 reasoning 段 + 干净 answer 段，无泄漏出来的中间 answer 段
+        assert types == ["reasoning", "answer"]
+        assert session.segment_state.segments[0].text == "reamore"
+        assert session.segment_state.segments[1].text == "Hello"
+
+    @pytest.mark.asyncio
+    async def test_completion_payload_does_not_duplicate_on_repeated_completion(self) -> None:
+        ctrl = _setup_ctrl()
+        session = CardSession("msg_repeat_completion", "chat", asyncio.get_running_loop())
+        session.state = SessionState.STREAMING
+        session.card_id = "card_repeat_completion"
+        session.card_msg_id = "card_msg_repeat_completion"
+        session.segment_state = SegmentState()
+        session.segment_state.on_answer_delta("interim")
+        ctrl._sessions[session.message_id] = session
+
+        with patch.object(ctrl, "_complete_session_wait", new_callable=AsyncMock, return_value=True):
+            for _ in range(2):
+                assert await ctrl.on_completed_wait(
+                    message_id=session.message_id,
+                    answer="final answer",
+                ) is True
+
+        assert [seg.text for seg in session.segment_state.segments] == [
+            "interim", "final answer"
+        ]
+
+    @pytest.mark.asyncio
     async def test_agent_failure_finalizes_card_as_error(self) -> None:
         ctrl = _setup_ctrl()
         session = CardSession("msg_error", "chat", asyncio.get_running_loop())
@@ -1009,6 +1142,65 @@ class TestAwaitedCompletion:
             ) is True
 
         assert session.state == SessionState.FAILED
+
+    @pytest.mark.asyncio
+    async def test_completion_notice_sent_only_after_successful_card_finish(self) -> None:
+        ctrl = _setup_ctrl()
+        ctrl._cfg._raw["streaming"]["completion_notice"] = True
+        ctrl._cfg._raw["streaming"]["completion_notice_text"] = "回答结束"
+        session = CardSession("msg_notice", "chat", asyncio.get_running_loop())
+        session.state = SessionState.STREAMING
+        session.card_id = "card_notice"
+        session.card_msg_id = "card_msg_notice"
+        session.footer = {"duration": 12.3}
+        ctrl._sessions[session.message_id] = session
+
+        with patch.object(ctrl, "_complete_session_wait", new_callable=AsyncMock, return_value=True), patch.object(
+            ctrl, "_fire_and_forget", return_value=None
+        ) as fire:
+            assert await ctrl.on_completed_wait(
+                message_id=session.message_id, answer="done", duration=12.3
+            ) is True
+
+        coroutine, loop = fire.call_args.args
+        try:
+            assert loop is session._loop
+            assert coroutine.cr_code.co_name == "_send_completion_notice"
+            assert coroutine.cr_frame.f_locals["text"] == "回答结束 · 12s"
+        finally:
+            coroutine.close()
+
+    @pytest.mark.asyncio
+    async def test_completion_notice_send_failure_is_isolated(self) -> None:
+        ctrl = _setup_ctrl()
+        ctrl._client.send_text_to_chat = AsyncMock(side_effect=RuntimeError("send failed"))
+        session = CardSession("msg_notice_send_fail", "chat", asyncio.get_running_loop())
+        session.card_msg_id = "card_msg_notice_send_fail"
+
+        await ctrl._send_completion_notice(session, "回答结束 · 出错")
+
+        ctrl._client.send_text_to_chat.assert_awaited_once_with(
+            "chat", "回答结束 · 出错", reply_to_message_id="card_msg_notice_send_fail"
+        )
+
+    @pytest.mark.asyncio
+    async def test_completion_notice_not_sent_when_card_finish_fails(self) -> None:
+        ctrl = _setup_ctrl()
+        ctrl._cfg._raw["streaming"]["completion_notice"] = True
+        session = CardSession("msg_notice_fail", "chat", asyncio.get_running_loop())
+        session.state = SessionState.STREAMING
+        session.card_id = "card_notice_fail"
+        session.card_msg_id = "card_msg_notice_fail"
+        ctrl._sessions[session.message_id] = session
+
+        with patch.object(ctrl, "_complete_session_wait", new_callable=AsyncMock, return_value=False), patch.object(
+            ctrl, "_fire_and_forget"
+        ) as fire:
+            assert await ctrl.on_completed_wait(
+                message_id=session.message_id, answer="done"
+            ) is False
+
+        fire.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -2094,6 +2286,58 @@ class TestCronDeliver:
         finally:
             loop.call_soon_threadsafe(loop.stop)
 
+    def test_strips_reasoning_tags_from_content(self) -> None:
+        import threading
+
+        ctrl = StreamCardController()
+        ctrl._cfg = MagicMock()
+        ctrl._cfg.enabled = True
+
+        mock_client = AsyncMock()
+        mock_client.send_card_to_chat.return_value = "msg_123"
+        ctrl._client = mock_client
+        ctrl._initialized = True
+
+        loop = asyncio.new_event_loop()
+        threading.Thread(target=loop.run_forever, daemon=True).start()
+        try:
+            result = ctrl.on_cron_deliver(
+                chat_id="c1", content="<think>rea</think>hello", loop=loop,
+            )
+            assert result is True
+            args = mock_client.send_card_to_chat.call_args[0]
+            body = args[1]["body"]["elements"][0]["content"]
+            assert "think" not in body
+            assert "hello" in body
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+
+    def test_all_reasoning_content_falls_back_to_raw(self) -> None:
+        import threading
+
+        ctrl = StreamCardController()
+        ctrl._cfg = MagicMock()
+        ctrl._cfg.enabled = True
+
+        mock_client = AsyncMock()
+        mock_client.send_card_to_chat.return_value = "msg_123"
+        ctrl._client = mock_client
+        ctrl._initialized = True
+
+        loop = asyncio.new_event_loop()
+        threading.Thread(target=loop.run_forever, daemon=True).start()
+        try:
+            # 全部内容都是 reasoning → 剥空后保底用原文，空卡片比展示推理更糟
+            result = ctrl.on_cron_deliver(
+                chat_id="c1", content="<think>pure reasoning</think>", loop=loop,
+            )
+            assert result is True
+            args = mock_client.send_card_to_chat.call_args[0]
+            body = args[1]["body"]["elements"][0]["content"]
+            assert "pure reasoning" in body
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+
     def test_sends_card_without_gateway_loop(self) -> None:
         ctrl = StreamCardController()
         ctrl._cfg = MagicMock()
@@ -2227,6 +2471,29 @@ class TestBackgroundDeliver:
         card = args[1]
         body = card["body"]["elements"][0]["content"]
         assert "Here\n\nDone" in body
+
+    @pytest.mark.asyncio
+    async def test_strips_reasoning_tags_from_content(self) -> None:
+        ctrl = StreamCardController()
+        ctrl._cfg = MagicMock()
+        ctrl._cfg.enabled = True
+
+        mock_client = AsyncMock()
+        mock_client.send_card_to_chat.return_value = "msg_123"
+        ctrl._client = mock_client
+        ctrl._initialized = True
+
+        result = await ctrl.on_background_deliver(
+            chat_id="c1",
+            preview="prompt",
+            content="<think>rea</think>Here\n\nDone",
+        )
+
+        assert result is True
+        args, _ = mock_client.send_card_to_chat.call_args
+        body = args[1]["body"]["elements"][0]["content"]
+        assert "think" not in body
+        assert "Here" in body
 
     @pytest.mark.asyncio
     async def test_returns_false_on_empty_cleaned_text(self) -> None:

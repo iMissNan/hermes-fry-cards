@@ -86,15 +86,15 @@ class TestFooterFields:
     )
     def test_empty_footer_configuration_returns_default(self, raw: dict[str, Any]) -> None:
         cfg = _make_config(raw)
-        assert cfg.footer_fields == [["status", "elapsed", "model", "context"]]
+        assert cfg.footer_fields == [["status", "elapsed", "speed", "cache", "context", "model"]]
 
     def test_footer_not_dict_returns_default(self) -> None:
         cfg = _make_config({"streaming": {"footer": "invalid"}})
-        assert cfg.footer_fields == [["status", "elapsed", "model", "context"]]
+        assert cfg.footer_fields == [["status", "elapsed", "speed", "cache", "context", "model"]]
 
     def test_fields_non_list_returns_default(self) -> None:
         cfg = _make_config({"streaming": {"footer": {"fields": "status"}}})
-        assert cfg.footer_fields == [["status", "elapsed", "model", "context"]]
+        assert cfg.footer_fields == [["status", "elapsed", "speed", "cache", "context", "model"]]
 
 
 class TestHeaderEnabled:
@@ -162,6 +162,20 @@ class TestCardDurationSec:
     def test_default(self) -> None:
         cfg = _make_config({"streaming": {}})
         assert cfg.card_duration_sec == 600
+
+
+class TestCompletionNotice:
+    def test_disabled_by_default(self) -> None:
+        assert _make_config({"streaming": {}}).completion_notice is False
+
+    def test_reads_enabled_and_custom_text(self) -> None:
+        cfg = _make_config({"streaming": {"completion_notice": True, "completion_notice_text": "Done"}})
+        assert cfg.completion_notice is True
+        assert cfg.completion_notice_text == "Done"
+
+    def test_blank_text_uses_default(self) -> None:
+        cfg = _make_config({"streaming": {"completion_notice_text": "  "}})
+        assert cfg.completion_notice_text == "回答结束"
 
 
 class TestWidthMode:
@@ -318,6 +332,54 @@ class TestShowToolUse:
             }
         })
         assert cfg.show_tool_use is False
+
+
+class TestPanelFields:
+    _DEFAULT = ["model", "reasoning", "tools", "context", "elapsed"]
+
+    def _make_config(self, raw: dict[str, Any]) -> Config:
+        """Create a Config with _reload mocked to return given raw dict."""
+        cfg = Config()
+        cfg._reload = lambda: raw  # type: ignore[assignment]
+        return cfg
+
+    def test_default(self) -> None:
+        assert self._make_config({}).panel_fields == self._DEFAULT
+
+    def test_platform_level(self) -> None:
+        cfg = self._make_config({
+            "display": {"platforms": {"feishu": {"panel_fields": ["cache", "speed"]}}}
+        })
+        assert cfg.panel_fields == ["cache", "speed"]
+
+    def test_global_fallback(self) -> None:
+        cfg = self._make_config({"display": {"panel_fields": ["elapsed"]}})
+        assert cfg.panel_fields == ["elapsed"]
+
+    def test_platform_takes_priority_over_global(self) -> None:
+        cfg = self._make_config({
+            "display": {
+                "platforms": {"feishu": {"panel_fields": ["model"]}},
+                "panel_fields": ["elapsed"],
+            }
+        })
+        assert cfg.panel_fields == ["model"]
+
+    def test_empty_returns_default(self) -> None:
+        cfg = self._make_config({"display": {"platforms": {"feishu": {"panel_fields": []}}}})
+        assert cfg.panel_fields == self._DEFAULT
+
+    def test_non_list_returns_default(self) -> None:
+        cfg = self._make_config({"display": {"platforms": {"feishu": {"panel_fields": "model"}}}})
+        assert cfg.panel_fields == self._DEFAULT
+
+    def test_non_string_items_return_default(self) -> None:
+        cfg = self._make_config({"display": {"platforms": {"feishu": {"panel_fields": ["model", 3]}}}})
+        assert cfg.panel_fields == self._DEFAULT
+
+    def test_display_not_dict(self) -> None:
+        cfg = self._make_config({"display": "invalid"})
+        assert cfg.panel_fields == self._DEFAULT
 
 
 class TestPlatformCfg:
@@ -578,3 +640,23 @@ class TestGroupSecurityBoundaryProperty:
         )
         gsb = Config(home=tmp_path).group_security_boundary
         assert gsb == {"enabled": True, "allow_chats": []}
+
+
+class TestStudioAllowedHosts:
+    def test_default_empty(self, tmp_path: Path) -> None:
+        assert Config(home=tmp_path).studio_allowed_hosts == []
+
+    def test_reads_and_cleans(self, tmp_path: Path) -> None:
+        conf = tmp_path / "config.yaml"
+        conf.write_text(
+            "studio:\n"
+            "  allowed_hosts: ['192.168.31.', ' 10.0.0.5 ', 123, '', '192.168.31.']\n",
+            encoding="utf-8",
+        )
+        assert Config(home=tmp_path).studio_allowed_hosts == ["192.168.31.", "10.0.0.5"]
+
+    def test_missing_or_wrong_type_falls_back(self, tmp_path: Path) -> None:
+        (tmp_path / "config.yaml").write_text("studio: broken\n", encoding="utf-8")
+        assert Config(home=tmp_path).studio_allowed_hosts == []
+        (tmp_path / "config.yaml").write_text("studio:\n  allowed_hosts: oops\n", encoding="utf-8")
+        assert Config(home=tmp_path).studio_allowed_hosts == []

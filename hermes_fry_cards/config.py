@@ -162,6 +162,29 @@ class Config:
         return bool(sec.get("enabled", True))
 
     @property
+    def studio_allowed_hosts(self) -> list[str]:
+        """Studio Host 门白名单附加项（``studio.allowed_hosts``）.
+
+        除内置 loopback（``127.0.0.1`` / ``localhost`` / ``::1``）外额外放行的 Host
+        或网段前缀（如 ``"192.168.31."`` 放行整个 C 段）。仅接受非空字符串，去重保序，
+        默认 ``[]``（仅 loopback 可访问）。由 Studio 进程启动时读取（缓存至重启）。
+        """
+        raw = self._reload().get("studio")
+        if not isinstance(raw, dict):
+            return []
+        hosts = raw.get("allowed_hosts")
+        if not isinstance(hosts, list):
+            return []
+        out: list[str] = []
+        for item in hosts:
+            if not isinstance(item, str):
+                continue
+            item = item.strip()
+            if item and item not in out:
+                out.append(item)
+        return out
+
+    @property
     def chat_types(self) -> set[str] | None:
         """允许发流式卡片的聊天类型集合（source.chat_type 的取值，如 ``dm`` / ``group``）。
 
@@ -432,6 +455,34 @@ class Config:
         return "text"
 
     @property
+    def panel_fields(self) -> list[str]:
+        """统一面板 header 字段组合（有序一维列表）.
+
+        与 footer 共用字段池：status/elapsed/speed/cache/tokens/context/model，
+        另有面板专属计数 reasoning（💭 推理轮数）/ tools（🔧 工具步数）。
+        context 受 show_context 总闸与 context_display_mode 样式控制。
+
+        优先级：display.platforms.feishu.panel_fields → display.panel_fields，
+        默认 ["model", "reasoning", "tools", "context", "elapsed"]（历史默认布局）。
+        非法或为空回落默认。
+        """
+        default = ["model", "reasoning", "tools", "context", "elapsed"]
+        display = self._reload().get("display")
+        if not isinstance(display, dict):
+            return default
+        raw: Any = None
+        platforms = display.get("platforms")
+        if isinstance(platforms, dict):
+            feishu = platforms.get("feishu")
+            if isinstance(feishu, dict) and "panel_fields" in feishu:
+                raw = feishu["panel_fields"]
+        if raw is None and "panel_fields" in display:
+            raw = display["panel_fields"]
+        if isinstance(raw, list) and raw and all(isinstance(x, str) and x for x in raw):
+            return list(raw)
+        return default
+
+    @property
     def feishu_app_id(self) -> str:
         return str(self._platform_cfg().get("app_id", ""))
 
@@ -491,6 +542,17 @@ class Config:
         return str(body.get("text_size", "normal_v2")) or "normal_v2"
 
     @property
+    def completion_notice(self) -> bool:
+        """Whether to send a short message after a card finishes successfully."""
+        return bool(self._streaming_sec().get("completion_notice", False))
+
+    @property
+    def completion_notice_text(self) -> str:
+        """Configured prefix for successful/error completion notices."""
+        value = str(self._streaming_sec().get("completion_notice_text", "回答结束")).strip()
+        return value or "回答结束"
+
+    @property
     def width_mode(self) -> str:
         """Card 宽度模式: default / compact / fill."""
         raw = str(self._streaming_sec().get("width_mode", "default") or "default").strip().lower()
@@ -533,7 +595,7 @@ class Config:
 
     @staticmethod
     def _default_footer_fields() -> list[list[str]]:
-        return [["status", "elapsed", "model", "context"]]
+        return [["status", "elapsed", "speed", "cache", "context", "model"]]
 
     @property
     def env_app_id(self) -> str:

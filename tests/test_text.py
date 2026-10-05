@@ -55,8 +55,8 @@ class TestSplitReasoningText:
         text = "<thinking>ongoing reasoning"
         result = split_reasoning_text(text)
         assert result["reasoning_text"] == "ongoing reasoning"
-        # reasoning_text 和 answer_text 都包含内容
-        assert result["answer_text"] is not None
+        # 未闭合标签的内容属于推理，answer 不应残留
+        assert result["answer_text"] is None
 
 
 class TestExtractThinkingContent:
@@ -81,19 +81,26 @@ class TestExtractThinkingContent:
 
 
 class TestStripReasoningTags:
-    def test_removes_tag_markers(self) -> None:
-        # 标签被移除，但标签间内容保留
-        result = strip_reasoning_tags("<thinking>content</thinking>")
-        assert "<thinking>" not in result
-        assert "</thinking>" not in result
+    def test_removes_complete_block_with_content(self) -> None:
+        # 完整块连同内容一起移除，否则 reasoning 泄漏进 answer，
+        # 完成卡片上与 💭 面板前后重复
+        assert strip_reasoning_tags("<thinking>content</thinking>") == ""
 
     def test_mixed_text_keeps_surrounding(self) -> None:
         text = "before<thinking>inner</thinking>after"
         result = strip_reasoning_tags(text)
-        assert "before" in result
-        assert "after" in result
-        # 标签标记被移除
-        assert "<thinking>" not in result
+        assert result == "beforeafter"
+
+    def test_removes_multiple_blocks(self) -> None:
+        text = "a<thinking>x</thinking>b<thought>y</thought>c"
+        assert strip_reasoning_tags(text) == "abc"
+
+    def test_unclosed_tail_removed(self) -> None:
+        assert strip_reasoning_tags("answer<thinking>tail to end") == "answer"
+
+    def test_stray_close_tag_removed(self) -> None:
+        # 跨 delta 拆分的残留闭合记号（无内容可删）只清记号
+        assert strip_reasoning_tags("hello </thinking>world") == "hello world"
 
     def test_no_tags_unchanged(self) -> None:
         assert strip_reasoning_tags("no tags here") == "no tags here"
@@ -101,3 +108,33 @@ class TestStripReasoningTags:
     def test_reasoning_prefix_clears_all(self) -> None:
         result = strip_reasoning_tags("Reasoning:\nsome content")
         assert result.strip() == ""
+
+    def test_hermes_reasoning_prepend_stripped(self) -> None:
+        # Hermes show_reasoning 开启时最终 response 前置的推理块，
+        # 完成卡片正文不应再渲染（💭 面板已有）
+        text = "💭 **Reasoning:**\n```\nstep 1\nstep 2\n```\n\nHello world"
+        assert strip_reasoning_tags(text) == "Hello world"
+
+    def test_hermes_reasoning_prepend_only(self) -> None:
+        text = "💭 **Reasoning:**\n```\nonly reasoning\n```\n\n"
+        assert strip_reasoning_tags(text).strip() == ""
+
+    def test_hermes_prepend_with_inner_code_fence(self) -> None:
+        # 推理内容含带语言标签的内层围栏：非贪婪正则会在内层 ``` 提前截断，
+        # 必须按围栏深度扫描剥到模板自己的闭合围栏
+        text = (
+            "💭 **Reasoning:**\n```\n先看结构如下\n```python\nx = 1\n```\n然后实现\n```\n\n"
+            "最终答案在这里"
+        )
+        assert strip_reasoning_tags(text) == "最终答案在这里"
+
+    def test_hermes_prepend_with_inner_bare_fence(self) -> None:
+        # 内层无语言标签的裸围栏（开后未关）：裸围栏先在内层处 depth 归零，
+        # 但其后不是空行 → 继续扫描到模板闭合围栏
+        text = "💭 **Reasoning:**\n```\n看:\n```\nx\n继续\n```\n\n答案"
+        assert strip_reasoning_tags(text) == "答案"
+
+    def test_hermes_prepend_unbalanced_fence_falls_back(self) -> None:
+        # 推理被截断导致围栏不配对：保底不剥，宁可重复也不吞掉答案正文
+        text = "💭 **Reasoning:**\n```\na\n```python\nb\n```\n\n答案"
+        assert strip_reasoning_tags(text) == text

@@ -624,6 +624,93 @@ def _build_reasoning_panel(
     return panel
 
 
+def _render_panel_field(
+    name: str,
+    data: dict,
+    *,
+    reasoning_count: int,
+    tool_count: int,
+    panel_elapsed_ms: int | float,
+    show_context: bool,
+    context_mode: str,
+) -> tuple[str | None, str | None]:
+    """统一面板 header 字段渲染 — 与 footer 共用字段池，外加面板专属计数.
+
+    面板 flair：model 前缀 🍟、elapsed 前缀 ⏱️（工具执行/会话耗时）、💭/🔧 为面板
+    专属计数（推理轮数/工具步数）；context 按 context_display_mode 渲染；
+    其余共享字段（speed/cache/tokens/status）原样回落 footer 渲染器。
+    """
+    if name == "model":
+        disp = _display_model_pair(data)
+        if disp:
+            v = f"🍟 {disp}"
+            return v, v
+        return None, None
+    if name == "reasoning":
+        if reasoning_count > 0:
+            return f"💭{reasoning_count}", f"💭{reasoning_count}"
+        return None, None
+    if name == "tools":
+        if tool_count > 0:
+            return f"🔧{tool_count}", f"🔧{tool_count}"
+        return None, None
+    if name == "elapsed":
+        if panel_elapsed_ms > 0:
+            v = f"⏱️ {_format_elapsed(panel_elapsed_ms)}"
+            return v, v
+        return None, None
+    if name == "context":
+        used = data.get("context_used", 0) or 0
+        max_c = data.get("context_max", 0) or 0
+        if show_context and used > 0 and max_c > 0:
+            if context_mode == "text":
+                v = _context_text(used, max_c)
+            elif context_mode in ("bar", "block"):
+                # block 样式桌面/移动端显示不一致，回落 bar
+                v = f"[{_context_progress_bar(used, max_c)}] {_context_pct(used, max_c)}"
+            else:  # text_bar / block_text
+                v = _context_progress_with_text(used, max_c)
+            return v, v
+        return None, None
+    return _render_footer_field(name, data, False, False, False)
+
+
+_PANEL_DEFAULT_FIELDS = ("model", "reasoning", "tools", "context", "elapsed")
+
+
+def _build_panel_header(
+    fields: list[str] | None,
+    data: dict,
+    *,
+    reasoning_count: int,
+    tool_count: int,
+    panel_elapsed_ms: int | float,
+    show_context: bool,
+    context_mode: str,
+) -> tuple[str, str]:
+    """组装统一面板 header 文本，返回 (en, zh)。无效/缺数据字段自动隐藏."""
+    if not fields:
+        fields = list(_PANEL_DEFAULT_FIELDS)
+    en_parts: list[str] = []
+    zh_parts: list[str] = []
+    for name in fields:
+        en, zh = _render_panel_field(
+            name,
+            data,
+            reasoning_count=reasoning_count,
+            tool_count=tool_count,
+            panel_elapsed_ms=panel_elapsed_ms,
+            show_context=show_context,
+            context_mode=context_mode,
+        )
+        if en:
+            en_parts.append(en)
+            zh_parts.append(zh or en)
+    # 面板出现的前提是有推理/工具内容，默认字段下 header 必非空；
+    # 自定义组合全部隐藏时回落 🍟 占位，避免空标题栏
+    return " · ".join(en_parts) or "🍟", " · ".join(zh_parts) or "🍟"
+
+
 def _build_footer_elements(
     footer_data: dict | None,
     is_error: bool = False,
@@ -633,7 +720,7 @@ def _build_footer_elements(
     text_size: str = "notation",
 ) -> list[dict]:
     if fields is None:
-        fields = [["status", "elapsed", "context", "model"]]
+        fields = [["status", "elapsed", "speed", "cache", "context", "model"]]
 
     data = footer_data or {}
     en_lines: list[str] = []
@@ -703,6 +790,23 @@ def _render_footer_field(
         if input_t or output_t:
             v = f"↑ {_compact(input_t)} ↓ {_compact(output_t)}"
             return v, v
+        return None, None
+
+    if name == "speed":
+        tps = data.get("tokens_per_sec", 0) or 0
+        if tps > 0:
+            v = f"{tps:.0f} tok/s"
+            return v, v
+        return None, None
+
+    if name == "cache":
+        # 口径同 Hermes（cli_status_bar_mixin）：hit = cache_read / prompt_tokens，
+        # prompt（input_tokens）已含缓存部分；零读取时隐藏（无数据 ≠ 0%）。
+        cache_read = data.get("cache_read_tokens", 0) or 0
+        input_t = data.get("input_tokens", 0) or 0
+        if cache_read > 0 and input_t > 0:
+            pct = min(round(cache_read / input_t * 100), 100)
+            return _T["cache_hit"][0].format(pct), _T["cache_hit"][1].format(pct)
         return None, None
 
     if name == "context":
@@ -904,6 +1008,7 @@ def build_complete_card(
     footer_show_label: bool = True,
     footer_enabled: bool = True,
     footer_text_size: str = "notation",
+    panel_fields: list[str] | None = None,
     panel_expanded: bool = False,
     header_enabled: bool = False,
     body_text_size: str = "normal_v2",
@@ -1093,44 +1198,34 @@ def build_complete_card(
                     element_id=f"tool_panel_{_tool_group_seq}",
                 )
                 unified_children.append(tool_panel)
-        # header: 🍟 model · 💭n · 🔧n · ⏳ context · ⏱️ elapsed
-        model_name = _display_model_pair(footer_data)
+        # header: 字段化组合（默认 🍟 model · 💭n · 🔧n · context · ⏱️ elapsed），
+        # 与 footer 共用字段池，可经 display.platforms.feishu.panel_fields 自由组合
+        from ..config import Config
+        _panel_cfg = Config()
         # 优先用 tool_elapsed_ms，否则用 footer_data 的 duration，否则用 session 总耗时
-        elapsed_ms = tool_elapsed_ms
-        if not elapsed_ms and footer_data:
-            duration = footer_data.get("duration")
-            if isinstance(duration, (int, float)) and duration > 0:
-                elapsed_ms = duration * 1000
-        elapsed_str = _format_elapsed(elapsed_ms) if elapsed_ms else ""
-        elapsed_part = f" · ⏱️ {elapsed_str}" if elapsed_str else ""
-        # 上下文信息：支持进度条 / 纯文本，通过配置独立控制
-        context_part = ""
-        if footer_data:
-            ctx_used = footer_data.get("context_used", 0) or 0
-            ctx_max = footer_data.get("context_max", 0) or 0
-            if ctx_used > 0 and ctx_max > 0:
-                from ..config import Config
-                cfg = Config()
-                if cfg.show_context:
-                    mode = cfg.context_display_mode
-                    if mode == "text":
-                        context_part = f" · {_context_text(ctx_used, ctx_max)}"
-                    elif mode == "bar":
-                        context_part = f" · [{_context_progress_bar(ctx_used, ctx_max)}] {_context_pct(ctx_used, ctx_max)}"
-                    elif mode == "block":
-                        # [已废弃] block 样式桌面/移动端显示不一致，回落到 bar
-                        context_part = f" · [{_context_progress_bar(ctx_used, ctx_max)}] {_context_pct(ctx_used, ctx_max)}"
-                    elif mode == "block_text":
-                        # [已废弃] block_text 同步回落为 text_bar（渐变样式）
-                        context_part = f" · {_context_progress_with_text(ctx_used, ctx_max)}"
-                    else:  # text_bar
-                        context_part = f" · {_context_progress_with_text(ctx_used, ctx_max)}"
-        header_text = f"🍟 {model_name} · 💭{len(reasoning_rounds)} · 🔧{len(tool_steps_total)}{context_part}{elapsed_part}"
+        panel_elapsed_ms = tool_elapsed_ms
+        if not panel_elapsed_ms and footer_data:
+            _p_duration = footer_data.get("duration")
+            if isinstance(_p_duration, (int, float)) and _p_duration > 0:
+                panel_elapsed_ms = _p_duration * 1000
+        header_en, header_zh = _build_panel_header(
+            panel_fields,
+            footer_data or {},
+            reasoning_count=len(reasoning_rounds),
+            tool_count=len(tool_steps_total),
+            panel_elapsed_ms=panel_elapsed_ms,
+            show_context=_panel_cfg.show_context,
+            context_mode=_panel_cfg.context_display_mode,
+        )
         unified_panel = {
             "tag": "collapsible_panel",
             "expanded": panel_expanded,
             "header": {
-                "title": {"tag": "plain_text", "content": header_text},
+                "title": {
+                    "tag": "plain_text",
+                    "content": header_en,
+                    "i18n_content": _i18n(header_en, header_zh),
+                },
                 "text_color": "grey", "text_size": "notation",
             },
             "border": {"color": border_color, "corner_radius": "5px"},

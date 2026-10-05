@@ -18,7 +18,6 @@ from .feishu import (
     FeishuClientConfig,
 )
 from .streaming.controller import StreamingController
-from .streaming.segments import SegmentType
 from .streaming.session import CardSession, SessionState
 from .streaming.text import strip_reasoning_tags
 
@@ -716,7 +715,37 @@ class StreamCardController(StreamingController):
         if is_error:
             session.mark_failed(reason="agent_returned_error")
 
-        return await self._complete_session_wait(session)
+        completed = await self._complete_session_wait(session)
+        if completed:
+            self._maybe_send_completion_notice(session, is_error=is_error)
+        return completed
+
+    def _maybe_send_completion_notice(self, session: CardSession, *, is_error: bool) -> None:
+        if not self._cfg.completion_notice or not session.card_msg_id:
+            return
+        try:
+            parts = [self._cfg.completion_notice_text]
+            duration = float(session.footer.get("duration") or 0)
+            if duration > 0:
+                parts.append(f"{duration:.0f}s")
+            if is_error:
+                parts.append("出错")
+            self._fire_and_forget(
+                self._send_completion_notice(session, " · ".join(parts)),
+                session._loop,
+            )
+        except Exception:
+            _logger.debug("completion notice skipped", exc_info=True)
+
+    async def _send_completion_notice(self, session: CardSession, text: str) -> None:
+        try:
+            await self._client.send_text_to_chat(
+                session.chat_id,
+                text,
+                reply_to_message_id=session.card_msg_id,
+            )
+        except Exception:
+            _logger.debug("completion notice send failed", exc_info=True)
 
     def on_cron_deliver(
         self,
@@ -746,7 +775,12 @@ class StreamCardController(StreamingController):
             _logger.info("cron card delivered: chat=%s len=%d", chat_id[:12], len(content))
             return True
         except Exception:
-            _logger.warning("cron card delivery failed", exc_info=True)
+            _logger.warning(
+                "cron card delivery failed: chat=%s task=%s",
+                str(chat_id)[:12],
+                task_name or "<unnamed>",
+                exc_info=True,
+            )
             return False
 
     async def on_background_deliver(
@@ -915,12 +949,10 @@ class StreamCardController(StreamingController):
         tokens: dict | None,
         context: dict | None,
     ) -> None:
-        if answer and session.segment_state and not any(
-            seg.type == SegmentType.ANSWER for seg in session.segment_state.segments
-        ):
+        if answer and session.segment_state:
             final_answer = strip_reasoning_tags(answer)
             if final_answer:
-                session.segment_state.on_answer_delta(final_answer)
+                session.segment_state.on_completion_answer(final_answer)
 
         # duration 为 0 时 fallback 到 session 已运行时间
         _duration = duration
@@ -936,12 +968,16 @@ class StreamCardController(StreamingController):
             _actual = _resolve_actual(_resolved_model)
         except Exception:
             _actual = ""
+        _cache_read = (tokens or {}).get("cache_read_tokens") or 0
+        _tps = (tokens or {}).get("tokens_per_sec") or 0
         session.footer = {
             "duration": _duration,
             "model": _resolved_model,
             **({"model_actual": _actual} if _actual else {}),
             **({"input_tokens": tokens.get("input_tokens")} if tokens else {}),
             **({"output_tokens": tokens.get("output_tokens")} if tokens else {}),
+            **({"cache_read_tokens": _cache_read} if _cache_read else {}),
+            **({"tokens_per_sec": _tps} if _tps else {}),
             **({"context_used": context.get("used_tokens")} if context else {}),
             **({"context_max": context.get("max_tokens")} if context else {}),
         }

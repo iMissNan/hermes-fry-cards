@@ -109,6 +109,9 @@ class TestValidation:
             ({"display": {"max_reasoning_panels": True}}, "max_reasoning_panels"),
             ({"display": {"context_display_mode": "huge"}}, "context_display_mode"),
             ({"display": {"unified_panel_min_duration": 601}}, "unified_panel_min_duration"),
+            ({"display": {"panel_fields": "model"}}, "数组"),
+            ({"display": {"panel_fields": ["model", "bogus"]}}, "字段"),
+            ({"display": {"panel_fields": ["speed", "speed"]}}, "重复"),
         ],
     )
     def test_invalid_values_rejected(self, bad: dict, match: str) -> None:
@@ -130,14 +133,82 @@ class TestValidation:
         assert out["streaming"]["chat_types"] == ["dm"]  # 去重
         assert out["display"]["max_reasoning_panels"] == 7
 
+    def test_footer_fields_accept_speed_cache(self) -> None:
+        out = srv.validate_payload(
+            {"streaming": {"footer": {"fields": [["status", "elapsed", "speed", "cache"]]}}}
+        )
+        assert out["streaming"]["footer"]["fields"] == [["status", "elapsed", "speed", "cache"]]
+
+    def test_panel_fields_validate_and_merge(self) -> None:
+        out = srv.validate_payload({"display": {"panel_fields": ["cache", "speed", "elapsed"]}})
+        assert out["display"]["panel_fields"] == ["cache", "speed", "elapsed"]
+        merged, _ = srv.merge_managed({}, out)
+        assert merged["display"]["platforms"]["feishu"]["panel_fields"] == ["cache", "speed", "elapsed"]
+        # 空列表合法（运行时回落默认布局）
+        out = srv.validate_payload({"display": {"panel_fields": []}})
+        assert out["display"]["panel_fields"] == []
+
     def test_partial_sections_allowed(self) -> None:
         out = srv.validate_payload({"display": {"show_reasoning": False}})
         assert "streaming" not in out
         assert out["display"]["show_reasoning"] is False
 
-    def test_textsize_accepts_normal_v2(self) -> None:
-        out = srv.validate_payload({"streaming": {"body": {"text_size": "normal_v2"}}})
-        assert out["streaming"]["body"]["text_size"] == "normal_v2"
+    @pytest.mark.parametrize("size", ["normal_v2", "normal", "heading", "notation"])
+    def test_textsize_accepts_supported_values(self, size: str) -> None:
+        out = srv.validate_payload({"streaming": {"body": {"text_size": size}}})
+        assert out["streaming"]["body"]["text_size"] == size
+
+    def test_textsize_rejects_unknown_value(self) -> None:
+        with pytest.raises(ValueError, match="text_size"):
+            srv.validate_payload({"streaming": {"body": {"text_size": "huge"}}})
+
+    def test_completion_notice_settings_validate_and_merge(self) -> None:
+        payload = srv.validate_payload({"streaming": {
+            "completion_notice": True,
+            "completion_notice_text": "完成啦",
+        }})
+        merged, _ = srv.merge_managed({}, payload)
+        assert merged["streaming"]["completion_notice"] is True
+        assert merged["streaming"]["completion_notice_text"] == "完成啦"
+        with pytest.raises(ValueError, match="completion_notice_text"):
+            srv.validate_payload({"streaming": {"completion_notice_text": " "}})
+
+    def test_completion_notice_state_roundtrip(self, server: str, home: Path) -> None:
+        _post_ok(server, "/api/config", {"streaming": {
+            "completion_notice": True,
+            "completion_notice_text": "答复完成",
+        }})
+        state = _get_json(server, "/api/state")
+        assert state["streaming"]["completion_notice"] is True
+        assert state["streaming"]["completion_notice_text"] == "答复完成"
+        cfg = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
+        assert cfg["streaming"]["completion_notice"] is True
+        assert cfg["streaming"]["completion_notice_text"] == "答复完成"
+
+    def test_preview_uses_heading_text_size(self, server: str) -> None:
+        data = _post_ok(server, "/api/preview", {
+            "scenario": "short",
+            "overrides": {"streaming": {"body": {"text_size": "heading"}}},
+        })
+        assert any(
+            element.get("text_size") == "heading"
+            for element in data["card"]["body"]["elements"]
+        )
+
+    def test_studio_ui_exposes_notice_and_heading(self) -> None:
+        html = (srv._WEB_ROOT / "index.html").read_text(encoding="utf-8")
+        assert 'id="f-completion-notice"' in html
+        assert 'id="f-completion-notice-text"' in html
+        assert 'value="heading"' in html
+        js = (srv._WEB_ROOT / "js" / "app.js").read_text(encoding="utf-8")
+        assert '"f-completion-notice"' in js
+        assert '"f-completion-notice-text"' in js
+        assert 'completion_notice_text:' in js
+
+
+# ---------------------------------------------------------------------------
+# 纯函数：白名单合并 / 备份 / 原子写
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -602,3 +673,58 @@ class TestVersionInStatus:
         assert state["status"]["hermes_version"] is None or isinstance(
             state["status"]["hermes_version"], str
         )
+
+
+class TestWildcardBindDefaults:
+    """默认绑 0.0.0.0（局域网可达）是产品决策 — 三处落点都要守住，别被改回 loopback."""
+
+    def test_run_studio_server_defaults_to_wildcard(self) -> None:
+        import inspect
+
+        assert inspect.signature(srv.run_studio_server).parameters["host"].default == "0.0.0.0"
+
+    def test_cli_studio_defaults_to_wildcard(self) -> None:
+        import inspect
+
+        from hermes_fry_cards.__main__ import _cmd_studio
+
+        assert 'host = "0.0.0.0"' in inspect.getsource(_cmd_studio)
+
+    def test_systemd_template_binds_wildcard(self) -> None:
+        template = (
+            Path(__file__).resolve().parents[1] / "systemd" / "hermes-fry-cards-studio.service"
+        )
+        assert "--host 0.0.0.0" in template.read_text(encoding="utf-8")
+
+    def test_wildcard_url_falls_back_to_loopback(self) -> None:
+        # 浏览器/打印不能用 0.0.0.0
+        assert srv._display_host("0.0.0.0") == "127.0.0.1"
+        assert srv._display_host("::") == "127.0.0.1"
+        assert srv._display_host("192.168.31.5") == "192.168.31.5"
+
+
+class TestAllowedHostsGate:
+    """Host 门白名单配置化（studio.allowed_hosts）— 默认仅 loopback，配置后放行网段."""
+
+    def test_lan_host_blocked_by_default(self, server: str) -> None:
+        host, port = server.removeprefix("http://").split(":")
+        conn = http.client.HTTPConnection(host, int(port), timeout=10)
+        conn.putrequest("GET", "/api/state", skip_host=True)
+        conn.putheader("Host", f"192.168.31.77:{port}")
+        conn.endheaders()
+        resp = conn.getresponse()
+        assert resp.status == 403
+        resp.read()
+        conn.close()
+
+    def test_lan_host_allowed_via_config(self, server: str, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(srv, "_ALLOWED_HOSTS_CACHE", ["127.0.0.1", "localhost", "::1", "192.168.31."])
+        host, port = server.removeprefix("http://").split(":")
+        conn = http.client.HTTPConnection(host, int(port), timeout=10)
+        conn.putrequest("GET", "/api/state", skip_host=True)
+        conn.putheader("Host", f"192.168.31.77:{port}")
+        conn.endheaders()
+        resp = conn.getresponse()
+        assert resp.status == 200
+        resp.read()
+        conn.close()
