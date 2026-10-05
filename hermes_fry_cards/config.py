@@ -23,12 +23,27 @@ def hermes_home() -> Path:
     return Path(get_hermes_home())
 
 
-def _get_secret(name: str) -> str:
+def _get_secret(name: str, home: Path | None = None) -> str:
     try:
         from agent.secret_scope import get_secret  # type: ignore[import-not-found]
-    except ImportError:
-        return os.environ.get(name, "")
-    return get_secret(name, "") or ""
+        val = get_secret(name, "") or ""
+        if val:
+            return val
+    except Exception:
+        pass
+    if os.environ.get(name):
+        return os.environ[name]
+    # 仅当没有传入自定义 home（即默认主 profile）时才允许兜底读 ~/.hermes/.env
+    if home is None:
+        try:
+            from dotenv import dotenv_values
+            env_file = hermes_home() / ".env"
+            if env_file.exists():
+                vals = dotenv_values(env_file)
+                return str(vals.get(name) or "")
+        except Exception:
+            pass
+    return ""
 
 
 def _config_path(home: Path | None = None) -> Path:
@@ -599,11 +614,11 @@ class Config:
 
     @property
     def env_app_id(self) -> str:
-        return _get_secret("FEISHU_APP_ID") or _get_secret("LARK_APP_ID")
+        return _get_secret("FEISHU_APP_ID", self._home) or _get_secret("LARK_APP_ID", self._home)
 
     @property
     def env_app_secret(self) -> str:
-        return _get_secret("FEISHU_APP_SECRET") or _get_secret("LARK_APP_SECRET")
+        return _get_secret("FEISHU_APP_SECRET", self._home) or _get_secret("LARK_APP_SECRET", self._home)
 
     def _streaming_sec(self) -> dict[str, Any]:
         raw = self._load()

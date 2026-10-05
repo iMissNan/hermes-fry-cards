@@ -135,8 +135,9 @@ class SegmentState:
         """Append final completion text once, preserving interim answer segments."""
         if not text or text in self._completion_answers:
             return
+        clean_text = text.strip()
         if any(
-            segment.type == SegmentType.ANSWER and segment.text.endswith(text)
+            segment.type == SegmentType.ANSWER and (segment.text.endswith(text) or segment.text.strip().endswith(clean_text))
             for segment in self.segments
         ):
             self._completion_answers.add(text)
