@@ -128,7 +128,8 @@ def _resolve_model_alias(entry: Any, now: datetime | None = None) -> str | None:
 def load_task_plan_config(raw_cfg: dict[str, Any] | None = None) -> dict[str, Any]:
     """读取 task_plan 配置段，并注入老板定案的默认值."""
     defaults = {
-        "enabled": True,
+        "enabled": False,
+        "inject_prompt": False,
         "min_steps": 3,
         "default_collapsed": True,
         "auto_collapse_on_done": True,
@@ -148,6 +149,8 @@ def load_task_plan_config(raw_cfg: dict[str, Any] | None = None) -> dict[str, An
     res = dict(defaults)
     if "enabled" in sec:
         res["enabled"] = bool(sec["enabled"])
+    if "inject_prompt" in sec:
+        res["inject_prompt"] = bool(sec["inject_prompt"])
     if "min_steps" in sec:
         try:
             res["min_steps"] = int(sec["min_steps"])

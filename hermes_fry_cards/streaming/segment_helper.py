@@ -186,25 +186,16 @@ def build_task_plan_update_action(
     element_id: str,
     tracker: Any,
     created: bool = False,
+    target_element_id: str | None = None,
 ) -> dict[str, Any] | None:
     """构造 task plan panel 更新 action.
     
-    当卡片上尚未创建该面板时，使用 add_elements (insert_before 第一个元素) 动态插入顶部；
-    当面板已在卡片上时，使用 partial_update_element 进行局部刷新。
+    统一使用 partial_update_element 进行局部刷新。
     """
     from ..cardkit.builder import build_task_plan_panel
     panel = build_task_plan_panel(tracker)
     if panel is None:
         return None
-    if not created:
-        return {
-            "action": "add_elements",
-            "params": {
-                "type": "insert_before",
-                "target_element_id": "tool_panel",
-                "elements": [panel],
-            },
-        }
     return {
         "action": "partial_update_element",
         "params": {

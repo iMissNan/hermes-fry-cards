@@ -71,41 +71,6 @@ class TaskPlanTracker:
             self.latest_sub_note = note
             self.dirty = True
 
-
-    def sync_from_tool_use(self, display_steps: Any) -> bool:
-        """从底层实际工具调用 (ToolUseTracker) 自动合成/聚合成任务计划看板.
-
-        当且仅当未显式收到 update_plan 规划时生效，真正做到像「工具执行中」一样天生自带！
-        """
-        # 如果已经有显式的计划（模型自己调了 update_plan），优先尊重显式计划
-        if not self.is_auto_synthesized and len(self.steps) > 0:
-            return False
-
-        if not display_steps or len(display_steps) < self.min_steps:
-            # 动作尚少于门槛 (默认3步)，保持静默
-            if self.is_auto_synthesized:
-                self.steps = []
-                self.dirty = True
-            return False
-
-        self.is_auto_synthesized = True
-        new_steps: list[PlanStep] = []
-        for idx, s in enumerate(display_steps, 1):
-            title = s.get("title", s.get("name", f"步骤 {idx}"))
-            status_val = s.get("status", "running")
-            # 格式化状态
-            if status_val in ("success", "completed"):
-                st = StepStatus.COMPLETED
-            elif status_val in ("running", "started"):
-                st = StepStatus.IN_PROGRESS
-            else:
-                st = StepStatus.PENDING
-            new_steps.append(PlanStep(id=str(idx), step=title, status=st))
-
-        self.steps = new_steps
-        self.dirty = True
-        return True
-
     def should_display(self) -> bool:
         return len(self.steps) >= self.min_steps
 

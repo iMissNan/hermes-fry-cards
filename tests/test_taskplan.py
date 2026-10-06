@@ -87,6 +87,21 @@ def test_controller_plan_interception():
         assert session.task_plan.should_display()
         assert session.task_plan.completed_count == 1
 
+        # 模拟 todo_list 工具调用 (支持 tool_call 嵌套)
+        todo_detail = '{"calls": [{"name": "todo_list", "arguments": {"todos": [{"id": "10", "content": "第一阶段", "status": "completed"}, {"id": "20", "content": "第二阶段", "status": "in_progress"}, {"id": "30", "content": "第三阶段", "status": "pending"}]}}]}'
+        session.handle_plan_update(todo_detail)
+        assert session.task_plan.should_display()
+        assert session.task_plan.steps[0].step == "第一阶段"
+        assert session.task_plan.current_active_step == "第二阶段"
+
+        # 模拟流式 action 构建
+        from hermes_fry_cards.streaming.segment_helper import build_task_plan_update_action
+        from hermes_fry_cards.cardkit.builder import TASK_PLAN_ELEMENT_ID
+        plan_act = build_task_plan_update_action(element_id=TASK_PLAN_ELEMENT_ID, tracker=session.task_plan)
+        assert plan_act is not None
+        assert plan_act["action"] == "partial_update_element"
+        assert plan_act["params"]["element_id"] == TASK_PLAN_ELEMENT_ID
+
         # 模拟子工具执行注脚联动
         session.update_tool_sub_note("terminal", "cat /etc/nginx/nginx.conf")
         assert "cat /etc/nginx" in session.task_plan.latest_sub_note
@@ -98,7 +113,7 @@ def test_task_plan_config_defaults():
     from hermes_fry_cards.config import load_task_plan_config
 
     cfg = load_task_plan_config({})
-    assert cfg["enabled"] is True
+    assert cfg["enabled"] is False
     assert cfg["min_steps"] == 3
     assert cfg["default_collapsed"] is True
     assert cfg["auto_collapse_on_done"] is True
@@ -106,14 +121,14 @@ def test_task_plan_config_defaults():
 
     custom = load_task_plan_config({
         "task_plan": {
-            "enabled": False,
+            "enabled": True,
             "min_steps": 5,
             "default_collapsed": False,
             "auto_collapse_on_done": False,
             "show_sub_note": False,
         }
     })
-    assert custom["enabled"] is False
+    assert custom["enabled"] is True
     assert custom["min_steps"] == 5
     assert custom["default_collapsed"] is False
     assert custom["auto_collapse_on_done"] is False
@@ -121,7 +136,7 @@ def test_task_plan_config_defaults():
 
 
 def test_card_structure_with_task_plan():
-    """验证完整的流式与完成态卡片 elements 开头包含任务计划组件."""
+    """验证方案 A 架构收拢：飞书流式卡片保持纯净轻量，首位为正文或工具面板，不强插任务计划面板."""
     from hermes_fry_cards.cardkit.builder import (
         TASK_PLAN_ELEMENT_ID,
         build_complete_card,
@@ -136,14 +151,14 @@ def test_card_structure_with_task_plan():
         {"id": "3", "step": "步骤三", "status": "pending"},
     ])
 
-    # 流式卡片
+    # 流式卡片：保持轻量纯净
     stream_card = build_streaming_card_v2(task_plan=tracker)
     elements = stream_card["body"]["elements"]
     assert len(elements) > 0
-    assert elements[0].get("element_id") == TASK_PLAN_ELEMENT_ID
-    assert elements[0]["tag"] == "collapsible_panel"
+    # 方案 A：首位不再被 task_plan_panel 挤占
+    assert all(e.get("element_id") != TASK_PLAN_ELEMENT_ID for e in elements)
 
-    # 完成态卡片
+    # 完成态卡片：同样保持纯净
     seg = Segment(SegmentType.ANSWER, "answer_0")
     seg.text = "任务执行完毕！"
     complete_card = build_complete_card(
@@ -153,54 +168,37 @@ def test_card_structure_with_task_plan():
     )
     c_elements = complete_card["body"]["elements"]
     assert len(c_elements) > 0
-    assert c_elements[0].get("element_id") == TASK_PLAN_ELEMENT_ID
-    assert complete_card["body"]["elements"][0]["tag"] == "collapsible_panel"
+    assert all(e.get("element_id") != TASK_PLAN_ELEMENT_ID for e in c_elements)
 
 
-def test_task_plan_auto_synthesis_from_tool_use():
-    """验证当模型未显式调用 update_plan 时，底层自动从工具流聚合成任务看板."""
+def test_task_plan_no_auto_synthesis_from_tools():
+    """验证工具调用不会篡位伪装成任务计划：只有显式调用 update_plan 才会展示阶段规划."""
     tracker = TaskPlanTracker(min_steps=3, default_collapsed=True)
     assert not tracker.should_display()
 
-    # 1. 模拟调用了 2 个工具（未达门槛 3 步） -> 依然不显示
-    steps_2 = [
-        {"name": "terminal", "title": "Terminal (1.2 s)", "status": "completed"},
-        {"name": "patch", "title": "Patch (0.3 s)", "status": "running"},
+    # 模拟显式调用 update_plan 规划
+    explicit_plan = [
+        {"id": "A", "step": "排查根因", "status": "completed"},
+        {"id": "B", "step": "修复代码", "status": "in_progress"},
+        {"id": "C", "step": "测试验收", "status": "pending"},
     ]
-    tracker.sync_from_tool_use(steps_2)
-    assert not tracker.should_display()
-    assert tracker.total_count == 0
-
-    # 2. 模拟调用了第 3 个工具（达到门槛） -> 自动升格为任务计划看板！
-    steps_3 = [
-        {"name": "terminal", "title": "Terminal (1.2 s)", "status": "completed"},
-        {"name": "patch", "title": "Patch (0.3 s)", "status": "completed"},
-        {"name": "terminal", "title": "Terminal (0.8 s)", "status": "running"},
-    ]
-    tracker.sync_from_tool_use(steps_3)
+    tracker.update_plan(explicit_plan)
     assert tracker.should_display()
     assert tracker.total_count == 3
-    assert tracker.completed_count == 2
-    assert tracker.is_auto_synthesized is True
-    assert tracker.current_active_step == "Terminal (0.8 s)"
+    assert tracker.completed_count == 1
+    assert tracker.current_active_step == "修复代码"
 
-    # 3. 验证此时 CardKit 生成的面板组件
+    # 验证动态动作小注脚
+    tracker.set_active_sub_note("terminal: pytest tests/")
+    assert tracker.latest_sub_note == "terminal: pytest tests/"
+
+    # 验证 CardKit 生成的面板组件
     from hermes_fry_cards.cardkit.builder import build_task_plan_panel
     panel = build_task_plan_panel(tracker)
     assert panel is not None
     assert panel["tag"] == "collapsible_panel"
-    assert "2/3" in str(panel["header"])
-
-    # 4. 如果中途模型突然显式调用了 update_plan -> 优先尊重显式高层计划，覆盖自动合成
-    explicit_plan = [
-        {"id": "A", "step": "排查根因", "status": "completed"},
-        {"id": "B", "step": "修复代码", "status": "completed"},
-        {"id": "C", "step": "测试验收", "status": "completed"},
-    ]
-    tracker.update_plan(explicit_plan)
-    assert tracker.is_auto_synthesized is False
-    assert tracker.is_all_completed is True
-    assert tracker.steps[0].step == "排查根因"
+    assert "1/3" in str(panel["header"])
+    assert "pytest tests/" in panel["elements"][0]["content"]
 
 
 

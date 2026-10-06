@@ -29,6 +29,8 @@ _T: dict[str, tuple[str, str]] = {
     "thinking_panel": ("Thinking", "思考中"),
     "thought_for": ("Thought for {}", "思考了 {}"),
     "done": ("Done.", "完成。"),
+    "task_plan_title": ("Task Plan ({}/{} · In Progress)", "📋 任务计划 ({}/{} · 进行中)"),
+    "task_plan_all_done": ("Task Plan Completed ({}/{})", "✅ 任务全量达成 ({}/{})"),
     # 内容层提示语（markdown 正文内嵌，无法走 i18n_content 双语 dict），
     # 由 _content_t 按 streaming.content_lang 构建时选取。
     "table_overflow_notice": (

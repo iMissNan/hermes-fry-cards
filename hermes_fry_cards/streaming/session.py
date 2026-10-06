@@ -170,10 +170,33 @@ class CardSession:
                 return False
         if not isinstance(data, dict):
             return False
+
+        # 支持 deferred tool_call 包装: {"calls": [{"name": "todo_list", "arguments": {...}}]}
+        if "calls" in data and isinstance(data["calls"], list):
+            for call in data["calls"]:
+                if isinstance(call, dict):
+                    c_name = str(call.get("name", "")).lower()
+                    c_args = call.get("arguments", {})
+                    if isinstance(c_args, dict) and ("todo" in c_name or "plan" in c_name or "todos" in c_args or "plan" in c_args or "steps" in c_args):
+                        data = c_args
+                        break
+
         plan_list = data.get("plan")
         if not isinstance(plan_list, list):
             # 支持顶层直接是 steps 列表或者 {"steps": [...]}
             plan_list = data.get("steps")
+        if not isinstance(plan_list, list):
+            # 支持 todo_list 格式: {"todos": [{"id": ..., "content": ..., "status": ...}]}
+            todos = data.get("todos")
+            if isinstance(todos, list):
+                plan_list = []
+                for item in todos:
+                    if isinstance(item, dict):
+                        plan_list.append({
+                            "id": item.get("id", ""),
+                            "step": item.get("content", item.get("step", "")),
+                            "status": item.get("status", "pending"),
+                        })
         if not isinstance(plan_list, list):
             return False
         explanation = str(data.get("explanation", ""))

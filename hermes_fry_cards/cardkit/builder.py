@@ -349,10 +349,12 @@ def build_task_plan_panel(tracker: Any) -> dict[str, Any] | None:
     # 完工状态收拢判定
     if tracker.is_all_completed:
         expanded = False if tracker.auto_collapse_on_done else not tracker.default_collapsed
-        title_text = f"✅ 任务全量达成 ({tracker.completed_count}/{tracker.total_count})"
+        en_title = _T["task_plan_all_done"][0].format(tracker.completed_count, tracker.total_count)
+        zh_title = _T["task_plan_all_done"][1].format(tracker.completed_count, tracker.total_count)
     else:
         expanded = not tracker.default_collapsed
-        title_text = f"📋 任务计划 ({tracker.completed_count}/{tracker.total_count} · 进行中)"
+        en_title = _T["task_plan_title"][0].format(tracker.completed_count, tracker.total_count)
+        zh_title = _T["task_plan_title"][1].format(tracker.completed_count, tracker.total_count)
 
     lines = []
     for s in tracker.steps:
@@ -372,7 +374,8 @@ def build_task_plan_panel(tracker: Any) -> dict[str, Any] | None:
         expanded=expanded,
         title_el={
             "tag": "plain_text",
-            "content": title_text,
+            "content": en_title,
+            "i18n_content": _i18n(en_title, zh_title),
             "text_size": "bold_v2",
         },
         elements=[{
@@ -920,6 +923,22 @@ def _context_progress_with_text(used: int, total: int, width: int = 8) -> str:
     return f"{used}/{total} [{bar}] {pct:.0f}%"
 
 
+def build_streaming_task_plan_pending_panel() -> dict[str, Any]:
+    panel = _collapsible_panel(
+        expanded=False,
+        title_el={
+            "tag": "plain_text",
+            "content": _T["task_plan_title"][0].format(0, 0),
+            "i18n_content": _i18n(_T["task_plan_title"][0].format(0, 0), "📋 任务计划"),
+            "text_color": "grey",
+            "text_size": "notation",
+        },
+        elements=[],
+    )
+    panel["element_id"] = TASK_PLAN_ELEMENT_ID
+    return panel
+
+
 def build_streaming_tool_use_pending_panel() -> dict[str, Any]:
     panel = _collapsible_panel(
         expanded=False,
@@ -950,10 +969,6 @@ def build_streaming_card_v2(
 ) -> dict[str, Any]:
     """CardKit 2.0 流式占位卡片 — 工具面板合并到底部."""
     elements: list[dict] = []
-
-    plan_panel = build_task_plan_panel(task_plan)
-    if plan_panel is not None:
-        elements.append(plan_panel)
 
     if show_reasoning:
         elements.append(
@@ -1021,10 +1036,6 @@ def build_complete_card(
     💭 思考1 → 🔧 工具组1 → 💭 思考2 → 🔧 工具组2 …（对齐工作流时间线）。
     """
     elements: list[dict] = []
-
-    plan_panel = build_task_plan_panel(task_plan)
-    if plan_panel is not None:
-        elements.append(plan_panel)
 
     has_answer = False
 

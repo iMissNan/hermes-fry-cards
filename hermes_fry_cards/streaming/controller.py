@@ -248,20 +248,6 @@ class StreamingController:
         # 合并面板追踪：多个 tool segment 共享同一个底部面板
         tool_panel_element_id: str | None = None
 
-        # 检查 task_plan 是否有更新需要同步给卡片 (首次 add_elements 插入顶部，后续 partial_update)
-        if session.task_plan and session.task_plan.should_display():
-            if session.task_plan.dirty or not session.task_plan.created:
-                plan_act = build_task_plan_update_action(
-                    element_id=TASK_PLAN_ELEMENT_ID,
-                    tracker=session.task_plan,
-                    created=session.task_plan.created,
-                )
-                if plan_act:
-                    actions.append(plan_act)
-                    session.task_plan.created = True
-                session.task_plan.dirty = False
-
-
         for i, seg in enumerate(segments):
             if i < session.split_index:
                 continue

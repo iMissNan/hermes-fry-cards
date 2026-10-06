@@ -314,14 +314,8 @@ class StreamCardController(StreamingController):
         if session.segment_state is None:
             return False
 
-        # 拦截任务计划更新 (update_plan / ekko_studio_update_plan)
-        if "update_plan" in tool_name.lower():
-            if status in ("running", "started", "tool.started"):
-                session.handle_plan_update(detail)
-            else:
-                session.handle_plan_update(detail)
-        elif session.task_plan:
-            # 其他子工具调用：提取命令摘要作为进行中步骤的最新动态小注脚
+        # 拦截任务计划更新 (若开启 task_plan 则更新注脚)
+        if session.task_plan:
             session.update_tool_sub_note(tool_name, detail)
 
         if status in ("running", "started", "tool.started"):
@@ -347,10 +341,6 @@ class StreamCardController(StreamingController):
                         tool_name,
                         session.message_id[:12],
                     )
-
-        # 真正像「工具执行中」一样天生自带：底层自动聚合成任务看板（若无显式规划）
-        if session.task_plan:
-            session.task_plan.sync_from_tool_use(session.tool_use.build_display_steps())
 
         session.segment_state.on_tool_event(len(session.tool_use.build_display_steps()))
         self._schedule_flush(session)
